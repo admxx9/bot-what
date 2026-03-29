@@ -405,6 +405,11 @@ async function iniciarBot() {
                        info.message?.listResponseMessage?.singleSelectReply?.selectedRowId ||
                        info.message?.buttonsResponseMessage?.selectedButtonId || "";
 
+      // Log temporário para debug de clique em botões
+      if (!conteudo) {
+        console.log('[DEBUG BTN]', JSON.stringify(info.message, null, 2));
+      }
+
       // Captura clique em botões interativos (nativeFlowMessage)
       if (!conteudo && info.message?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson) {
         try {
