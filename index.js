@@ -6,7 +6,9 @@ const { default: makeWASocket,
   DisconnectReason,
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
-  downloadContentFromMessage
+  downloadContentFromMessage,
+  generateWAMessageFromContent,
+  proto
 } = require("baileys");
 const fs = require('fs');
 const { Boom } = require('@hapi/boom');
@@ -423,20 +425,30 @@ async function iniciarBot() {
       };
 
       const enviarBotoes = async (bodyText, footerText, botoes) => {
-        await sock.sendMessage(from, {
-          interactiveMessage: {
-            body: { text: bodyText },
-            footer: { text: footerText },
-            header: { hasMediaAttachment: false },
-            nativeFlowMessage: {
-              buttons: botoes.map(b => ({
-                name: "quick_reply",
-                buttonParamsJson: JSON.stringify({ display_text: b.label, id: b.id })
-              })),
-              messageParamsJson: ""
+        const mensagemInterativa = generateWAMessageFromContent(
+          from,
+          proto.Message.fromObject({
+            interactiveMessage: {
+              body: { text: bodyText },
+              footer: { text: footerText },
+              header: { hasMediaAttachment: false },
+              nativeFlowMessage: {
+                buttons: botoes.map(b => ({
+                  name: "quick_reply",
+                  buttonParamsJson: JSON.stringify({ display_text: b.label, id: b.id })
+                })),
+                messageParamsJson: ""
+              },
+              contextInfo: info.key ? {
+                stanzaId: info.key.id,
+                participant: sender,
+                quotedMessage: info.message
+              } : {}
             }
-          }
-        }, { quoted: info });
+          }),
+          { userJid: sock.user.id }
+        );
+        await sock.relayMessage(from, mensagemInterativa.message, { messageId: mensagemInterativa.key.id });
       };
 
       const enviarMenuLista = async () => {
