@@ -1,389 +1,311 @@
-// Base WhatsApp Bot - Com Sistema de Pagamentos Efí Bank
-// Versão corrigida
+// 🎰 CasinoBot — Bot de Cassino WhatsApp
 
 // ========== MÓDULOS ==========
-const { default: makeWASocket,
-  DisconnectReason,
-  useMultiFileAuthState,
-  fetchLatestBaileysVersion,
-  downloadContentFromMessage,
-  generateWAMessageFromContent,
-  proto
-} = require("baileys");
-const fs = require('fs');
+const { default: makeWASocket, DisconnectReason, useMultiFileAuthState,
+  fetchLatestBaileysVersion, downloadContentFromMessage,
+  generateWAMessageFromContent, proto } = require("baileys");
+const fs      = require('fs');
 const { Boom } = require('@hapi/boom');
 const NodeCache = require("node-cache");
-const readline = require("readline");
-const fetch = require('node-fetch');
-const pino = require('pino');
-const chalk = require('chalk');
+const readline  = require("readline");
+const fetch     = require('node-fetch');
+const pino      = require('pino');
+const chalk     = require('chalk');
 const { v4: uuidv4 } = require('uuid');
 
-// ========== BOTÕES INTERATIVOS ==========
 const { sendButtons } = require('./buttons');
-
-// ========== SISTEMA DE PAGAMENTO EFÍ (INTEGRAÇÃO PRÓPRIA VIA API REST) ==========
 const EfiBankPix = require('./efipay');
-let efipay = null;
-let efipayReady = false;
-
-// ========== CORES ==========
-const color = (text, c) => {
-  return !c ? chalk.green(text) : chalk.keyword(c)(text);
-};
 
 // ========== BANNER ==========
-console.log(chalk.greenBright("🤖 MEU BOT - COM EFÍ BANK PIX"));
-console.log(chalk.cyan("━".repeat(40)));
+console.log(chalk.yellowBright("🎰 CASINO BOT — WhatsApp"));
+console.log(chalk.cyan("═".repeat(40)));
 
-// ========== CONFIGURAÇÕES ==========
+// ========== CONFIG ==========
 const prefixos = ['.', '!', '/', '#', '$'];
-let botAtivo = true;
+let botAtivo   = true;
+const sleep    = ms => new Promise(r => setTimeout(r, ms));
 
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-// ⚠️ ALTERE AQUI: coloque seu número completo com DDI (sem + ou espaços)
 let dono = "5511999999999@s.whatsapp.net";
+const CASINO_IMG = 'https://static.wixstatic.com/media/79e6b8_5a82b1a250234f66a7aa8e237611160b~mv2.jpg/v1/fill/w_568,h_378,al_c,q_80,usm_0.66_1.00_0.01,enc_avif,quality_auto/79e6b8_5a82b1a250234f66a7aa8e237611160b~mv2.jpg';
 
-// ========== CONFIGURAÇÕES EFÍ BANK ==========
-// ⚠️ ALTERE com suas credenciais reais do painel Efí Bank
+// ========== EFI BANK ==========
+let efipay = null, efipayReady = false;
 const EFI_CLIENT_ID     = 'Client_Id_c5402771eee923060261f03590f4d8b82ce4b88c';
 const EFI_CLIENT_SECRET = 'Client_Secret_345bde04a214ac7e2464bbbb73b08b161ecfc2af';
-const EFI_SANDBOX       = false;   // false quando for produção
+const EFI_SANDBOX       = false;
 const EFI_PIX_KEY       = 'a45331e2-840e-41dc-bc93-8f1bd2b6fd91';
-const EFI_CERT_PATH     = './certificado.p12'; // obrigatório para produção
+const EFI_CERT_PATH     = './certificado.p12';
 
-// Inicializa cliente Efí com integração própria via API REST
-// ⚠️ O certificado .p12 é obrigatório tanto em SANDBOX quanto em PRODUÇÃO
 if (EFI_CLIENT_ID !== 'SEU_CLIENT_ID_AQUI') {
   try {
-    efipay = new EfiBankPix({
-      client_id: EFI_CLIENT_ID,
-      client_secret: EFI_CLIENT_SECRET,
-      sandbox: EFI_SANDBOX,
-      certificate: EFI_CERT_PATH  // sempre necessário — inclusive em sandbox
-    });
+    efipay = new EfiBankPix({ client_id: EFI_CLIENT_ID, client_secret: EFI_CLIENT_SECRET, sandbox: EFI_SANDBOX, certificate: EFI_CERT_PATH });
     efipayReady = true;
-    console.log(chalk.green(`✅ Efí Bank configurado — modo: ${EFI_SANDBOX ? 'SANDBOX' : 'PRODUÇÃO'}`));
-  } catch (erro) {
-    console.log(chalk.red("❌ Erro ao configurar Efí Bank:"), erro.message);
-    efipayReady = false;
-  }
-} else {
-  console.log(chalk.yellow("⚠️ Configure suas credenciais Efí Bank em index.js antes de usar pagamentos."));
+    console.log(chalk.green(`✅ Efí Bank — modo: ${EFI_SANDBOX ? 'SANDBOX' : 'PRODUÇÃO'}`));
+  } catch (err) { console.log(chalk.red("❌ Efí Bank:"), err.message); }
 }
 
-// ========== PLANOS DISPONÍVEIS ==========
-const PLANOS = {
-  '7d':  { nome: '7 Dias - Teste', dias: 7,  valor: 0.01 },
-  '15d': { nome: '15 Dias',        dias: 15, valor: 19.90 },
-  '30d': { nome: '30 Dias',        dias: 30, valor: 34.90 }
-};
-
-// ========== BANCO DE DADOS JSON ==========
-const databasePath    = './database/';
-const usuariosPath    = './database/usuarios.json';
-const pagamentosPath  = './database/pagamentos.json';
-const planosAtivosPath = './database/planos_ativos.json';
+// ========== DATABASE ==========
+const DB_PATH       = './database/';
+const usuariosPath  = './database/usuarios.json';
+const pagamentosPath = './database/pagamentos.json';
 
 function initDatabase() {
-  if (!fs.existsSync(databasePath)) fs.mkdirSync(databasePath, { recursive: true });
-  if (!fs.existsSync(usuariosPath))    fs.writeFileSync(usuariosPath,    JSON.stringify([], null, 2));
-  if (!fs.existsSync(pagamentosPath))  fs.writeFileSync(pagamentosPath,  JSON.stringify([], null, 2));
-  if (!fs.existsSync(planosAtivosPath)) fs.writeFileSync(planosAtivosPath, JSON.stringify([], null, 2));
+  if (!fs.existsSync(DB_PATH)) fs.mkdirSync(DB_PATH, { recursive: true });
+  if (!fs.existsSync(usuariosPath))  fs.writeFileSync(usuariosPath,  JSON.stringify([], null, 2));
+  if (!fs.existsSync(pagamentosPath)) fs.writeFileSync(pagamentosPath, JSON.stringify([], null, 2));
 }
 
-function lerJSON(caminho) {
-  try {
-    return JSON.parse(fs.readFileSync(caminho, 'utf8'));
-  } catch {
-    return [];
-  }
-}
+const lerJSON  = p => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return []; } };
+const salvarJSON = (p, d) => fs.writeFileSync(p, JSON.stringify(d, null, 2));
 
-function salvarJSON(caminho, dados) {
-  fs.writeFileSync(caminho, JSON.stringify(dados, null, 2));
-}
-
-function adicionarUsuario(userId, nome, username) {
-  const usuarios = lerJSON(usuariosPath);
-  if (!usuarios.find(u => u.id === userId)) {
-    usuarios.push({
-      id: userId,
-      nome,
-      username: username || nome,
-      coins: 100,
-      nivel: 1,
-      xp: 0,
-      criadoEm: new Date()
-    });
-    salvarJSON(usuariosPath, usuarios);
-    return true; // novo usuário
+function adicionarUsuario(userId, nome) {
+  const users = lerJSON(usuariosPath);
+  if (!users.find(u => u.id === userId)) {
+    users.push({ id: userId, nome, fichas: 500, ultimoBonus: null, totalGanho: 0, criadoEm: new Date() });
+    salvarJSON(usuariosPath, users);
+    return true;
   }
   return false;
 }
 
-function getCoins(userId) {
-  const usuarios = lerJSON(usuariosPath);
-  const user = usuarios.find(u => u.id === userId);
-  return user ? (user.coins ?? 100) : 100;
+function getFichas(userId) {
+  const u = lerJSON(usuariosPath).find(u => u.id === userId);
+  return u ? (u.fichas ?? 500) : 500;
 }
 
-function adicionarCoins(userId, quantidade) {
-  const usuarios = lerJSON(usuariosPath);
-  const index = usuarios.findIndex(u => u.id === userId);
-  if (index !== -1) {
-    usuarios[index].coins = (usuarios[index].coins ?? 100) + quantidade;
-    salvarJSON(usuariosPath, usuarios);
-    return usuarios[index].coins;
-  }
+function addFichas(userId, qtd) {
+  const users = lerJSON(usuariosPath);
+  const i = users.findIndex(u => u.id === userId);
+  if (i !== -1) { users[i].fichas = (users[i].fichas ?? 500) + qtd; salvarJSON(usuariosPath, users); return users[i].fichas; }
   return 0;
 }
 
-function removerCoins(userId, quantidade) {
-  const usuarios = lerJSON(usuariosPath);
-  const index = usuarios.findIndex(u => u.id === userId);
-  if (index !== -1) {
-    const coinsAtuais = usuarios[index].coins ?? 100;
-    if (coinsAtuais >= quantidade) {
-      usuarios[index].coins = coinsAtuais - quantidade;
-      salvarJSON(usuariosPath, usuarios);
-      return true;
-    }
+function remFichas(userId, qtd) {
+  const users = lerJSON(usuariosPath);
+  const i = users.findIndex(u => u.id === userId);
+  if (i !== -1 && (users[i].fichas ?? 500) >= qtd) {
+    users[i].fichas = (users[i].fichas ?? 500) - qtd;
+    salvarJSON(usuariosPath, users); return true;
   }
   return false;
 }
 
-function isUsuarioAtivo(userId) {
-  const planos = lerJSON(planosAtivosPath);
-  const plano = planos.find(p => p.userId === userId && p.status === 'ativo');
-  return plano && new Date(plano.expiraEm) > new Date();
+function podePegarBonus(userId) {
+  const u = lerJSON(usuariosPath).find(u => u.id === userId);
+  if (!u || !u.ultimoBonus) return true;
+  const hj = new Date(); hj.setHours(0,0,0,0);
+  return new Date(u.ultimoBonus) < hj;
 }
 
-function getPlanoUsuario(userId) {
-  const planos = lerJSON(planosAtivosPath);
-  const plano = planos.find(p => p.userId === userId && p.status === 'ativo');
-  if (plano && new Date(plano.expiraEm) > new Date()) return plano;
-  return null;
+function registrarBonus(userId) {
+  const users = lerJSON(usuariosPath);
+  const i = users.findIndex(u => u.id === userId);
+  if (i !== -1) { users[i].ultimoBonus = new Date(); salvarJSON(usuariosPath, users); }
 }
 
-function ativarPlano(userId, planType, dias) {
-  let planos = lerJSON(planosAtivosPath);
-  planos = planos.filter(p => p.userId !== userId);
-  const expiraEm = new Date();
-  expiraEm.setDate(expiraEm.getDate() + dias);
-  planos.push({
-    userId,
-    plano: planType,
-    status: 'ativo',
-    ativadoEm: new Date(),
-    expiraEm
-  });
-  salvarJSON(planosAtivosPath, planos);
-  return true;
-}
-
-// ========== FUNÇÕES DE PAGAMENTO (CORRIGIDAS) ==========
-async function gerarPagamentoPIX(userId, userNome, planType) {
-  if (!efipayReady) return { error: "Sistema de pagamento não configurado" };
-
+// ========== PAGAMENTO PIX (RECARGA) — 1 BRL = 1 FICHA ==========
+async function gerarRecargaPix(userId, valorReais) {
+  if (!efipayReady) return { error: "PIX não configurado. Contate o dono." };
   try {
-    const plano = PLANOS[planType];
-    if (!plano) return { error: "Plano inválido" };
-
-    const body = {
+    const fichas = Math.floor(valorReais);
+    const cobranca = await efipay.pixCreateImmediateCharge({
       calendario: { expiracao: 3600 },
-      valor: { original: plano.valor.toFixed(2) },
+      valor: { original: valorReais.toFixed(2) },
       chave: EFI_PIX_KEY,
-      solicitacaoPagador: `Plano ${plano.nome} - ${userId.split('@')[0]}`
-    };
-
-    // Cria a cobrança na Efí Bank (POST /v2/cob)
-    const cobranca = await efipay.pixCreateImmediateCharge(body);
-
-    if (!cobranca || !cobranca.txid) {
-      console.error('Resposta inesperada da Efí:', JSON.stringify(cobranca));
-      return { error: "Resposta inválida da Efí Bank" };
-    }
-
-    // Gera QR Code usando o locId retornado pela cobrança
-    const locId = cobranca.loc?.id;
-    if (!locId) {
-      console.error('loc.id não encontrado na resposta:', JSON.stringify(cobranca));
-      return { error: "QR Code indisponível" };
-    }
-
-    const qrData = await efipay.pixGenerateQRCode(locId);
-
-    const pagamento = {
-      txid: cobranca.txid,
-      userId,
-      plano: planType,
-      valor: plano.valor,
-      status: 'pendente',
-      criadoEm: new Date(),
-      expiraEm: new Date(Date.now() + 3600000),
-      qrCodeBase64: qrData.imagemQrcode,
-      copiaCola: qrData.qrcode
-    };
-
-    const pagamentos = lerJSON(pagamentosPath);
-    pagamentos.push(pagamento);
-    salvarJSON(pagamentosPath, pagamentos);
-
-    return {
-      txid: cobranca.txid,
-      qrCodeBase64: qrData.imagemQrcode,
-      copiaCola: qrData.qrcode,
-      valor: plano.valor,
-      expiraEm: pagamento.expiraEm
-    };
-
-  } catch (erro) {
-    console.error(chalk.red('❌ Erro ao gerar PIX:'), erro.message);
-    if (erro.response) {
-      console.error('Resposta API Efí:', JSON.stringify(erro.response.data, null, 2));
-    }
-    return { error: erro.message || "Erro desconhecido" };
-  }
+      solicitacaoPagador: `Casino Bot — ${fichas} fichas — ${userId.split('@')[0]}`
+    });
+    if (!cobranca?.txid) return { error: "Resposta inválida da Efí" };
+    const qrData = await efipay.pixGenerateQRCode(cobranca.loc?.id);
+    const pag = { txid: cobranca.txid, userId, fichas, valor: valorReais, status: 'pendente', criadoEm: new Date(), expiraEm: new Date(Date.now() + 3600000), qrCodeBase64: qrData.imagemQrcode, copiaCola: qrData.qrcode };
+    const pags = lerJSON(pagamentosPath); pags.push(pag); salvarJSON(pagamentosPath, pags);
+    return pag;
+  } catch (err) { return { error: err.message }; }
 }
 
-async function verificarPagamento(txid) {
-  if (!efipayReady) return 'erro';
-
+async function verificarRecarga(txid) {
+  if (!efipayReady) return { status: 'erro' };
   try {
-    const response = await efipay.pixDetailCharge(txid);
-
-    if (response.status === 'CONCLUIDA') {
-      const pagamentos = lerJSON(pagamentosPath);
-      const index = pagamentos.findIndex(p => p.txid === txid);
-      if (index !== -1) {
-        pagamentos[index].status = 'pago';
-        pagamentos[index].pagoEm = new Date();
-        salvarJSON(pagamentosPath, pagamentos);
-        const plano = PLANOS[pagamentos[index].plano];
-        if (plano) ativarPlano(pagamentos[index].userId, pagamentos[index].plano, plano.dias);
+    const res = await efipay.pixDetailCharge(txid);
+    if (res.status === 'CONCLUIDA') {
+      const pags = lerJSON(pagamentosPath);
+      const i = pags.findIndex(p => p.txid === txid);
+      if (i !== -1 && pags[i].status !== 'pago') {
+        pags[i].status = 'pago'; pags[i].pagoEm = new Date();
+        salvarJSON(pagamentosPath, pags);
+        addFichas(pags[i].userId, pags[i].fichas);
+        return { status: 'pago', fichas: pags[i].fichas, userId: pags[i].userId };
       }
-      return 'pago';
-    } else if (response.status === 'ATIVA') {
-      return 'pendente';
-    } else {
-      return 'expirado';
     }
-  } catch (erro) {
-    console.error(chalk.red('❌ Erro ao verificar pagamento:'), erro.message);
-    return 'erro';
-  }
+    return { status: res.status === 'ATIVA' ? 'pendente' : 'expirado' };
+  } catch { return { status: 'erro' }; }
 }
 
-function iniciarMonitoramentoPagamento(txid, from, sock, planType, userId) {
-  const intervalo = 15 * 1000;
-  const maxTentativas = 240;
-  let tentativas = 0;
-
-  const timer = setInterval(async () => {
-    tentativas++;
-    if (tentativas > maxTentativas) {
-      clearInterval(timer);
-      return;
-    }
-
+function monitorarRecarga(txid, from, sock) {
+  let t = 0;
+  const iv = setInterval(async () => {
+    if (++t > 240) return clearInterval(iv);
     try {
-      const status = await verificarPagamento(txid);
-      if (status === 'pago') {
-        clearInterval(timer);
-        const plano = PLANOS[planType];
-        await sock.sendMessage(from, {
-          text: `✅ *PAGAMENTO CONFIRMADO!*\n\n🎉 Seu plano *${plano.nome}* foi ativado com sucesso!\n📅 Válido por *${plano.dias} dias*\n\nObrigado pela sua compra! 🙏`
-        });
+      const r = await verificarRecarga(txid);
+      if (r.status === 'pago') {
+        clearInterval(iv);
+        await sock.sendMessage(from, { text: `✅ *RECARGA CONFIRMADA!*\n\n🎰 *+${r.fichas} fichas* adicionadas!\n💰 Novo saldo: *${getFichas(r.userId)} fichas*` });
       }
-    } catch (e) {
-      // silencioso durante polling
-    }
-  }, intervalo);
+    } catch {}
+  }, 15000);
 }
 
-// ========== FUNÇÕES DE JOGOS ==========
-function jogarDado() {
-  return Math.floor(Math.random() * 6) + 1;
+// ========== SESSÕES DE JOGO EM MEMÓRIA ==========
+const sessoesJogo = new Map();
+
+// ========== FUNÇÕES DOS JOGOS ==========
+
+// --- SLOT ---
+const SLOT_EMOJIS = ['🍒','🍋','🔔','💎','7️⃣','⭐','🃏'];
+
+function gerarSlot() {
+  return Array(3).fill(0).map(() => SLOT_EMOJIS[Math.floor(Math.random() * SLOT_EMOJIS.length)]);
 }
 
-function jogarSlot() {
-  const emojis = ['🍒', '🍋', '🔔', '💎', '7️⃣'];
-  return [
-    emojis[Math.floor(Math.random() * 5)],
-    emojis[Math.floor(Math.random() * 5)],
-    emojis[Math.floor(Math.random() * 5)]
-  ];
-}
-
-function calcularGanhoSlot(resultado, aposta) {
-  if (resultado[0] === resultado[1] && resultado[1] === resultado[2]) {
-    if (resultado[0] === '7️⃣') return aposta * 10;
-    if (resultado[0] === '💎') return aposta * 5;
-    return aposta * 2;
+function calcularGanhoSlot(res, aposta) {
+  if (res[0] === res[1] && res[1] === res[2]) {
+    if (res[0] === '7️⃣') return { ganho: aposta * 10, msg: '🎊 JACKPOT MÁXIMO! 10x' };
+    if (res[0] === '💎') return { ganho: aposta * 5,  msg: '💎 DIAMANTE! 5x' };
+    if (res[0] === '⭐') return { ganho: aposta * 3,  msg: '⭐ ESTRELA! 3x' };
+    return { ganho: aposta * 2, msg: '🎉 TRIPLO! 2x' };
   }
+  if (res[0] === res[1] || res[1] === res[2] || res[0] === res[2]) return { ganho: Math.floor(aposta * 0.5), msg: '😅 Par... devolveu metade' };
+  return { ganho: 0, msg: '😢 Sem sorte!' };
+}
+
+// --- ROLETA ---
+const ROLETA = [];
+for (let n = 0; n <= 36; n++) {
+  const cor = n === 0 ? '⚫' : (n % 2 === 0 ? '⚫' : '🔴');
+  ROLETA.push({ n, cor });
+}
+
+function calcularGanhoRoleta(aposta, tipo, resultado) {
+  const { n, cor } = resultado;
+  if (tipo === 'vermelho' && cor === '🔴') return aposta * 1.8;
+  if (tipo === 'preto'    && cor === '⚫' && n !== 0) return aposta * 1.8;
+  if (tipo === 'par'      && n !== 0 && n % 2 === 0) return aposta * 1.8;
+  if (tipo === 'impar'    && n % 2 !== 0) return aposta * 1.8;
+  if (tipo === '1-12'     && n >= 1 && n <= 12)  return aposta * 2.8;
+  if (tipo === '13-24'    && n >= 13 && n <= 24) return aposta * 2.8;
+  if (tipo === '25-36'    && n >= 25 && n <= 36) return aposta * 2.8;
+  if (!isNaN(parseInt(tipo)) && parseInt(tipo) === n) return aposta * 35;
   return 0;
+}
+
+// --- BLACKJACK ---
+const BJ_NAIPES = ['♠','♥','♦','♣'];
+const BJ_VALS   = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
+
+function criarBaralho() {
+  return BJ_NAIPES.flatMap(n => BJ_VALS.map(v => ({ n, v }))).sort(() => Math.random() - 0.5);
+}
+
+function valorCarta(v) {
+  if (['J','Q','K'].includes(v)) return 10;
+  if (v === 'A') return 11;
+  return parseInt(v);
+}
+
+function calcMao(mao) {
+  let t = mao.reduce((s, c) => s + valorCarta(c.v), 0);
+  let as = mao.filter(c => c.v === 'A').length;
+  while (t > 21 && as-- > 0) t -= 10;
+  return t;
+}
+
+function exibirMao(mao) { return mao.map(c => `${c.n}${c.v}`).join(' '); }
+
+// --- MINES ---
+const MINES_MULTS = [1.2, 1.5, 2.0, 3.0, 5.0, 8.0, 13.0, 20.0, 50.0];
+
+function gerarMines(qtdBombas = 3) {
+  const idx = Array.from({length: 9}, (_, i) => i).sort(() => Math.random() - 0.5);
+  return idx.slice(0, qtdBombas);
+}
+
+function montarTextoBoardMines(sess) {
+  const icons = Array(9).fill('🔒');
+  for (const r of sess.reveladas) icons[r] = sess.bombas.includes(r) ? '💣' : '💎';
+  const linhas = [
+    `${icons[0]} ${icons[1]} ${icons[2]}`,
+    `${icons[3]} ${icons[4]} ${icons[5]}`,
+    `${icons[6]} ${icons[7]} ${icons[8]}`
+  ];
+  const gemasReveladas = sess.reveladas.filter(r => !sess.bombas.includes(r)).length;
+  const mult = MINES_MULTS[Math.min(gemasReveladas, MINES_MULTS.length - 1)];
+  return `💣 *CAMPO MINADO*\nAposta: ${sess.aposta} fichas\n\n${linhas.join('\n')}\n\nGemas: ${gemasReveladas}/6 | Próx mult: ${mult}x\nPotencial: ${Math.floor(sess.aposta * mult)} fichas`;
+}
+
+function montarBotoesMines(sess) {
+  const bts = [];
+  for (let i = 0; i < 9; i++) {
+    if (!sess.reveladas.includes(i)) {
+      bts.push({ label: `🔒 ${i+1}`, id: `.celula${i}` });
+    }
+  }
+  const gemasRev = sess.reveladas.filter(r => !sess.bombas.includes(r)).length;
+  if (gemasRev > 0) {
+    const mult = MINES_MULTS[Math.min(gemasRev - 1, MINES_MULTS.length - 1)];
+    bts.unshift({ label: `💰 Sacar (${Math.floor(sess.aposta * mult)} fichas)`, id: '.sacar' });
+  }
+  return bts;
+}
+
+// --- TORRE ---
+const TORRE_MULTS = [1.5, 2.5, 4.0, 7.0, 15.0];
+
+// --- CRASH ---
+function gerarCrashPoint() {
+  const r = Math.random();
+  if (r < 0.4) return parseFloat((1.0 + Math.random()).toFixed(2));
+  if (r < 0.7) return parseFloat((2.0 + Math.random() * 2).toFixed(2));
+  if (r < 0.9) return parseFloat((4.0 + Math.random() * 6).toFixed(2));
+  return parseFloat((10.0 + Math.random() * 40).toFixed(2));
 }
 
 // ========== FUNÇÃO PRINCIPAL ==========
 async function iniciarBot() {
-  console.log(chalk.cyanBright("\n🤖 Iniciando bot..."));
-
+  console.log(chalk.cyanBright("\n🎰 Iniciando Casino Bot..."));
   initDatabase();
 
   const { state, saveCreds } = await useMultiFileAuthState("./sessao");
-  const { version } = await fetchLatestBaileysVersion();
+  const { version }          = await fetchLatestBaileysVersion();
   const msgRetryCounterCache = new NodeCache();
 
   const sock = makeWASocket({
-    version,
-    logger: pino({ level: "silent" }),
+    version, logger: pino({ level: "silent" }),
     printQRInTerminal: false,
-    auth: {
-      creds: state.creds,
-      keys: state.keys
-    },
+    auth: { creds: state.creds, keys: state.keys },
     markOnlineOnConnect: true,
-    msgRetryCounterCache,
+    msgRetryCounterCache
   });
 
   if (!sock.authState.creds.registered) {
-    const rlInterface = readline.createInterface({ input: process.stdin, output: process.stdout });
-    const question = (texto) => new Promise((resolve) => rlInterface.question(texto, resolve));
-    let numero = await question(chalk.cyan("📱 Digite seu número com código do país (apenas números, ex: 5511999999999): "));
-    rlInterface.close();
-    numero = numero.replace(/[^0-9]/g, "");
-
-    if (!numero) {
-      console.log(chalk.red("❌ Número inválido."));
-      process.exit(1);
-    }
-
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const q  = t => new Promise(r => rl.question(t, r));
+    let num  = await q(chalk.cyan("📱 Número com DDI (ex: 5511999999999): "));
+    rl.close();
+    num = num.replace(/\D/g, "");
+    if (!num) { console.log(chalk.red("❌ Número inválido.")); process.exit(1); }
     try {
-      const codigo = await sock.requestPairingCode(numero);
-      console.log(chalk.bgGreen.black("\n✅ CÓDIGO DE VINCULAÇÃO:"), chalk.white.bold(codigo));
-      console.log(chalk.yellow("Digite esse código no WhatsApp: Configurações > Aparelhos conectados > Conectar com código\n"));
-    } catch (err) {
-      console.error(chalk.red("❌ Erro ao gerar código:"), err.message);
-      process.exit(1);
-    }
+      const code = await sock.requestPairingCode(num);
+      console.log(chalk.bgGreen.black("\n✅ CÓDIGO:"), chalk.white.bold(code));
+      console.log(chalk.yellow("WhatsApp > Configurações > Aparelhos conectados > Conectar com código\n"));
+    } catch (err) { console.error(chalk.red("❌ Erro:"), err.message); process.exit(1); }
   }
 
-  sock.ev.on("connection.update", async (update) => {
-    const { connection, lastDisconnect } = update;
-
+  sock.ev.on("connection.update", async ({ connection, lastDisconnect }) => {
     if (connection === "close") {
       const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
-      if (reason === DisconnectReason.loggedOut) {
-        console.log(chalk.red("❌ Sessão encerrada. Delete a pasta 'sessao' e reconecte."));
-        process.exit(0);
-      } else {
-        console.log(chalk.yellow("⚠️ Conexão perdida. Reconectando em 3s..."));
-        setTimeout(iniciarBot, 3000);
-      }
+      if (reason === DisconnectReason.loggedOut) { console.log(chalk.red("❌ Sessão encerrada.")); process.exit(0); }
+      else { console.log(chalk.yellow("⚠️ Reconectando em 3s...")); setTimeout(iniciarBot, 3000); }
     } else if (connection === "open") {
-      console.log(chalk.greenBright("✅ Bot conectado com sucesso!"));
+      console.log(chalk.greenBright("✅ Casino Bot conectado!"));
     }
   });
 
@@ -396,346 +318,746 @@ async function iniciarBot() {
       if (info.key.remoteJid === "status@broadcast") return;
       if (info.key.fromMe) return;
 
-      const from   = info.key.remoteJid;
+      const from    = info.key.remoteJid;
       const ehGrupo = from.endsWith('@g.us');
       const sender  = ehGrupo ? info.key.participant : from;
-      const nome    = info.pushName || "Usuário";
-      let conteudo = info.message?.conversation ||
-                       info.message?.extendedTextMessage?.text ||
-                       info.message?.listResponseMessage?.singleSelectReply?.selectedRowId ||
-                       info.message?.buttonsResponseMessage?.selectedButtonId ||
-                       info.message?.templateButtonReplyMessage?.selectedId || "";
+      const nome    = info.pushName || "Jogador";
 
-      // Captura clique em botões interativos (nativeFlowMessage / interactiveResponseMessage)
+      let conteudo = info.message?.conversation ||
+        info.message?.extendedTextMessage?.text ||
+        info.message?.listResponseMessage?.singleSelectReply?.selectedRowId ||
+        info.message?.buttonsResponseMessage?.selectedButtonId ||
+        info.message?.templateButtonReplyMessage?.selectedId || "";
+
       if (!conteudo && info.message?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson) {
-        try {
-          const parsed = JSON.parse(info.message.interactiveResponseMessage.nativeFlowResponseMessage.paramsJson);
-          conteudo = parsed.id || "";
-        } catch {}
+        try { conteudo = JSON.parse(info.message.interactiveResponseMessage.nativeFlowResponseMessage.paramsJson).id || ""; } catch {}
       }
 
-      const args = conteudo.trim().split(/ +/).slice(1);
-      const comando = conteudo.toLowerCase().split(" ")[0];
-      const q = args.join(' ');
-      const ehDono = sender === dono;
+      const args       = conteudo.trim().split(/ +/).slice(1);
+      const comando    = conteudo.toLowerCase().split(" ")[0];
+      const q          = args.join(' ');
+      const ehDono     = sender === dono;
 
-      const enviar = (texto) => sock.sendMessage(from, { text: texto }, { quoted: info });
-      const reagir = (emoji) => sock.sendMessage(from, { react: { text: emoji, key: info.key } });
-      const digitando = async (ms = 2000) => {
+      const enviar  = t => sock.sendMessage(from, { text: t }, { quoted: info });
+      const reagir  = e => sock.sendMessage(from, { react: { text: e, key: info.key } });
+      const digitar = async (ms = 2000) => {
         await sock.sendPresenceUpdate('available', from);
         await sock.sendPresenceUpdate('composing', from);
         await sleep(ms);
         await sock.sendPresenceUpdate('paused', from);
       };
 
-      const enviarBotoes = async (titulo, bodyText, footerText, botoes) => {
-        // botoes = [{ label, id }]
-        await sendButtons(sock, from, {
-          title: titulo,
-          text: bodyText,
-          footer: footerText,
-          buttons: botoes.map(b => ({ id: b.id, text: b.label }))
-        });
-      };
+      const enviarBotoes = (titulo, corpo, rodape, botoes) =>
+        sendButtons(sock, from, { title: titulo, text: corpo, footer: rodape, buttons: botoes.map(b => ({ id: b.id, text: b.label })) });
 
-      const enviarMenuLista = async () => {
-        const planoStatus = isUsuarioAtivo(sender) ? "✅ Ativo" : "❌ Inativo";
+      // ========== MENU CASSINO COM IMAGEM ==========
+      const enviarMenu = async () => {
+        const fichas = getFichas(sender);
+        const caption =
+          `🎰 *CASINO BOT*\n` +
+          `${'═'.repeat(22)}\n\n` +
+          `👤 *${nome}*\n` +
+          `💰 Fichas: *${fichas.toLocaleString('pt-BR')}* 🪙\n\n` +
+          `_Bem-vindo ao cassino! Boa sorte!_ 🍀`;
+
+        await sock.sendMessage(from, { image: { url: CASINO_IMG }, caption }, { quoted: info });
+        await sleep(800);
         await enviarBotoes(
-          "🤖 MEU BOT",
-          `👤 ${nome}\n💰 Coins: ${getCoins(sender)}\n📋 Plano: ${planoStatus}`,
-          "Selecione uma opção abaixo",
+          "🎰 CASINO BOT",
+          `💰 Fichas: ${fichas.toLocaleString('pt-BR')} 🪙`,
+          "O que você quer fazer?",
           [
-            { label: "👤 Meu Perfil",  id: ".perfil"   },
-            { label: "💳 Ver Planos",  id: ".planos"   },
-            { label: "🎮 Jogos",       id: ".jogos"    },
-            { label: "🏆 Ranking",     id: ".rank"     },
-            { label: "📅 Meu Plano",   id: ".meuplano" }
+            { label: "🎮 Jogar",         id: ".jogos"       },
+            { label: "👤 Meu Perfil",    id: ".perfil"      },
+            { label: "🏆 Ranking",       id: ".rank"        },
+            { label: "🎁 Bônus Diário",  id: ".diario"      },
+            { label: "💳 Recarregar",    id: ".recarregar"  }
           ]
         );
       };
 
+      // ========== DETECÇÃO DE PREFIXO ==========
       let prefixoUsado = null;
-      for (const p of prefixos) {
-        if (comando.startsWith(p)) { prefixoUsado = p; break; }
-      }
+      for (const p of prefixos) { if (comando.startsWith(p)) { prefixoUsado = p; break; } }
 
-      // Primeira interação: novo usuário recebe boas-vindas + menu
-      const ehNovoUsuario = adicionarUsuario(sender, nome, info.pushName || nome);
-      if (ehNovoUsuario && !prefixoUsado) {
-        await digitando(2500);
-        await enviar(`👋 Olá, *${nome}*! Seja bem-vindo(a) ao *MEU BOT* 🤖\n\nAqui está o menu para você começar:`);
-        await sleep(2000);
-        await enviarMenuLista();
+      // ========== NOVO USUÁRIO ==========
+      const ehNovo = adicionarUsuario(sender, nome);
+      if (ehNovo && !prefixoUsado) {
+        await digitar(2500);
+        await reagir('🎰');
+        await enviar(`🎰 *Bem-vindo ao Casino Bot, ${nome}!*\n\nVocê ganhou *500 fichas* de boas-vindas! 🪙\n\nUse .menu para começar.`);
+        await sleep(1500);
+        await enviarMenu();
         return;
       }
 
       if (!prefixoUsado) return;
 
-      const comandoLimpo = comando.slice(prefixoUsado.length);
-
-      // Comandos do dono
-      if (comandoLimpo === 'ligar') {
-        if (!ehDono) return enviar("❌ Apenas o dono pode usar este comando.");
-        botAtivo = true;
-        return enviar("✅ Bot ligado!");
-      }
-
-      if (comandoLimpo === 'desligar') {
-        if (!ehDono) return enviar("❌ Apenas o dono pode usar este comando.");
-        botAtivo = false;
-        return enviar("❌ Bot desligado!");
-      }
-
-      // Ativar plano manualmente (dono)
-      if (comandoLimpo === 'ativar') {
-        if (!ehDono) return enviar("❌ Apenas o dono pode usar este comando.");
-        const [numTarget, planTarget] = q.split(' ');
-        if (!numTarget || !planTarget || !PLANOS[planTarget]) {
-          return enviar("❌ Use: .ativar [número] [7d/15d/30d]\nEx: .ativar 5511999999999 30d");
-        }
-        const targetId = `${numTarget}@s.whatsapp.net`;
-        ativarPlano(targetId, planTarget, PLANOS[planTarget].dias);
-        return enviar(`✅ Plano ${PLANOS[planTarget].nome} ativado para ${numTarget}`);
-      }
-
+      const cmd = comando.slice(prefixoUsado.length);
       if (!botAtivo && !ehDono) return;
 
-      console.log(chalk.gray(`[CMD] ${nome} > ${prefixoUsado}${comandoLimpo}${q ? ' ' + q : ''}`));
+      console.log(chalk.gray(`[CMD] ${nome} > ${prefixoUsado}${cmd}${q ? ' '+q : ''}`));
 
-      const temPlanoAtivo = isUsuarioAtivo(sender);
-      const precisaPlano = ['slot', 'dado', 'roleta', 'duplicar', 'blackjack'];
+      // ========== SESSÕES ATIVAS — PRIORIDADE ==========
+      const sessao = sessoesJogo.get(sender);
 
-      if (precisaPlano.includes(comandoLimpo) && !temPlanoAtivo && !ehDono) {
-        return enviar(`⚠️ *VOCÊ NÃO TEM UM PLANO ATIVO!*\n\nPara jogar, você precisa de uma assinatura.\n\n📋 *Planos:*\n• 7 dias - R$ 0,01\n• 15 dias - R$ 19,90\n• 30 dias - R$ 34,90\n\nUse: ${prefixoUsado}planos`);
+      if (sessao) {
+        // --- BLACKJACK ---
+        if (sessao.jogo === 'bj') {
+          if (cmd === 'pedir') {
+            await reagir('🃏');
+            sessao.maoJogador.push(sessao.baralho.pop());
+            const total = calcMao(sessao.maoJogador);
+            if (total > 21) {
+              sessoesJogo.delete(sender);
+              remFichas(sender, sessao.aposta);
+              await reagir('💀');
+              return enviar(`🃏 *BLACKJACK*\n\nSua mão: ${exibirMao(sessao.maoJogador)} = *${total}*\n\n💥 *ESTOUROU! PERDEU!*\n💰 Saldo: ${getFichas(sender)} fichas`);
+            }
+            await enviarBotoes(
+              "🃏 Blackjack",
+              `Sua mão: ${exibirMao(sessao.maoJogador)} = *${total}*\nDealer: ${exibirMao([sessao.maoDealer[0]])} ?`,
+              `Aposta: ${sessao.aposta} fichas`,
+              [{ label: "🃏 Pedir carta", id: ".pedir" }, { label: "🛑 Parar", id: ".parar" }]
+            );
+            return;
+          }
+
+          if (cmd === 'parar') {
+            await reagir('🛑');
+            await digitar(2000);
+            // Dealer joga
+            while (calcMao(sessao.maoDealer) < 17) sessao.maoDealer.push(sessao.baralho.pop());
+            const pJ = calcMao(sessao.maoJogador);
+            const pD = calcMao(sessao.maoDealer);
+            sessoesJogo.delete(sender);
+            let resultado, ganho;
+            if (pD > 21 || pJ > pD) {
+              ganho = Math.floor(sessao.aposta * 1.8);
+              addFichas(sender, ganho);
+              resultado = `🎉 *VOCÊ GANHOU!* +${ganho} fichas`;
+              await reagir('🎉');
+            } else if (pJ === pD) {
+              ganho = sessao.aposta;
+              addFichas(sender, ganho);
+              resultado = `🤝 *EMPATE!* Fichas devolvidas`;
+            } else {
+              remFichas(sender, sessao.aposta);
+              resultado = `😢 *DEALER GANHOU!* -${sessao.aposta} fichas`;
+              await reagir('😢');
+            }
+            return enviar(`🃏 *BLACKJACK — RESULTADO*\n\nSua mão: ${exibirMao(sessao.maoJogador)} = *${pJ}*\nDealer: ${exibirMao(sessao.maoDealer)} = *${pD}*\n\n${resultado}\n💰 Saldo: ${getFichas(sender)} fichas`);
+          }
+        }
+
+        // --- MINES ---
+        if (sessao.jogo === 'mines') {
+          if (cmd === 'sacar') {
+            const gemasRev = sessao.reveladas.filter(r => !sessao.bombas.includes(r)).length;
+            if (gemasRev === 0) { sessoesJogo.delete(sender); return enviar("❌ Revele pelo menos 1 gema antes de sacar!"); }
+            const mult = MINES_MULTS[Math.min(gemasRev - 1, MINES_MULTS.length - 1)];
+            const ganho = Math.floor(sessao.aposta * mult);
+            addFichas(sender, ganho);
+            sessoesJogo.delete(sender);
+            await reagir('💰');
+            return enviar(`💰 *MINES — SAQUE*\n\nGemas reveladas: ${gemasRev}\nMultiplicador: ${mult}x\n🎉 Ganhou: *+${ganho} fichas*\n💰 Saldo: ${getFichas(sender)} fichas`);
+          }
+
+          if (cmd.startsWith('celula') && !isNaN(cmd.slice(6))) {
+            const idx = parseInt(cmd.slice(6));
+            if (idx < 0 || idx > 8 || sessao.reveladas.includes(idx)) return;
+            sessao.reveladas.push(idx);
+            await reagir('🔍');
+
+            if (sessao.bombas.includes(idx)) {
+              // BOMBA!
+              sessoesJogo.delete(sender);
+              remFichas(sender, sessao.aposta);
+              const board = montarTextoBoardMines(sessao);
+              await reagir('💥');
+              return enviar(`${board}\n\n💥 *BOOM! VOCÊ BATEU EM UMA BOMBA!*\nPERDEU ${sessao.aposta} fichas!\n💰 Saldo: ${getFichas(sender)} fichas`);
+            }
+
+            // Gema!
+            const gemasRev = sessao.reveladas.filter(r => !sessao.bombas.includes(r)).length;
+            if (gemasRev >= 6) {
+              // Todas gemas reveladas = jackpot
+              const ganho = Math.floor(sessao.aposta * MINES_MULTS[MINES_MULTS.length - 1]);
+              addFichas(sender, ganho);
+              sessoesJogo.delete(sender);
+              await reagir('🎊');
+              return enviar(`${montarTextoBoardMines(sessao)}\n\n🎊 *JACKPOT! TODAS AS GEMAS!*\n+${ganho} fichas!\n💰 Saldo: ${getFichas(sender)} fichas`);
+            }
+
+            const board = montarTextoBoardMines(sessao);
+            await enviar(board);
+            await sleep(500);
+            await enviarBotoes(
+              "💣 Mines",
+              `Gemas: ${gemasRev} reveladas`,
+              "Clique numa célula ou saque!",
+              montarBotoesMines(sessao)
+            );
+            return;
+          }
+        }
+
+        // --- TORRE ---
+        if (sessao.jogo === 'torre') {
+          const portaCmd = { 'porta1': 1, 'porta2': 2, 'porta3': 3 };
+          if (cmd in portaCmd) {
+            const escolha = portaCmd[cmd];
+            await reagir('🗼');
+            const portaCerta = sessao.portasCertas[sessao.andarAtual - 1];
+
+            if (escolha !== portaCerta) {
+              // ELIMINADO
+              sessoesJogo.delete(sender);
+              remFichas(sender, sessao.aposta);
+              await reagir('💥');
+              return enviar(`🗼 *TORRE — ANDAR ${sessao.andarAtual}*\n\n💥 A Porta ${escolha} era uma ARMADILHA!\nA porta certa era a ${portaCerta}!\n\nPERDEU ${sessao.aposta} fichas!\n💰 Saldo: ${getFichas(sender)} fichas`);
+            }
+
+            // PASSOU!
+            if (sessao.andarAtual >= 5) {
+              const ganho = Math.floor(sessao.aposta * TORRE_MULTS[4]);
+              addFichas(sender, ganho);
+              sessoesJogo.delete(sender);
+              await reagir('🏆');
+              return enviar(`🗼 *TORRE — COMPLETOU!*\n\n🏆 Chegou ao topo!\nMultiplicador: 15x\n🎉 Ganhou: *+${ganho} fichas*!\n💰 Saldo: ${getFichas(sender)} fichas`);
+            }
+
+            sessao.andarAtual++;
+            const mult = TORRE_MULTS[sessao.andarAtual - 2];
+            const multProx = TORRE_MULTS[sessao.andarAtual - 1];
+            const sacando = Math.floor(sessao.aposta * mult);
+            await digitar(1500);
+            await enviarBotoes(
+              `🗼 Torre — Andar ${sessao.andarAtual}/5`,
+              `✅ Passou! Mult atual: ${mult}x\nAndar ${sessao.andarAtual} — Próximo: ${multProx}x`,
+              `Sacar agora (${sacando} fichas) ou continue?`,
+              [
+                { label: "🚪 Porta 1", id: ".porta1" },
+                { label: "🚪 Porta 2", id: ".porta2" },
+                { label: "🚪 Porta 3", id: ".porta3" },
+                { label: `💰 Sacar (${sacando} fichas)`, id: ".sacar" }
+              ]
+            );
+            return;
+          }
+
+          if (cmd === 'sacar') {
+            const mult = sessao.andarAtual > 1 ? TORRE_MULTS[sessao.andarAtual - 2] : 0;
+            if (sessao.andarAtual === 1) { return enviar("❌ Escolha uma porta primeiro para poder sacar!"); }
+            const ganho = Math.floor(sessao.aposta * mult);
+            addFichas(sender, ganho);
+            sessoesJogo.delete(sender);
+            await reagir('💰');
+            return enviar(`🗼 *TORRE — SAQUE*\n\nAndar atingido: ${sessao.andarAtual - 1}/5\nMultiplicador: ${mult}x\n🎉 Ganhou: *+${ganho} fichas*!\n💰 Saldo: ${getFichas(sender)} fichas`);
+          }
+        }
+
+        // --- CRASH ---
+        if (sessao.jogo === 'crash' && cmd === 'ejetar') {
+          clearInterval(sessao.timer);
+          const mult = sessao.multAtual;
+          const ganho = Math.floor(sessao.aposta * mult);
+          sessoesJogo.delete(sender);
+          addFichas(sender, ganho);
+          await reagir('🚀');
+          return enviar(`💥 *CRASH — EJETOU!*\n\nMultiplicador: *${mult}x*\n🎉 Ganhou: *+${ganho} fichas*!\n💰 Saldo: ${getFichas(sender)} fichas`);
+        }
+
+        // --- RASPADINHA ---
+        if (sessao.jogo === 'raspadinha') {
+          const rasparCmd = { 'raspar1': 0, 'raspar2': 1, 'raspar3': 2 };
+          if (cmd in rasparCmd) {
+            const idx = rasparCmd[cmd];
+            if (sessao.reveladas[idx]) return;
+            sessao.reveladas[idx] = true;
+            await reagir('🎁');
+
+            const mostrar = sessao.simbolos.map((s, i) => sessao.reveladas[i] ? s : '🔒');
+            const todasReveladas = sessao.reveladas.every(Boolean);
+
+            if (!todasReveladas) {
+              const bts = [];
+              if (!sessao.reveladas[0]) bts.push({ label: "🔒 Raspar 1", id: ".raspar1" });
+              if (!sessao.reveladas[1]) bts.push({ label: "🔒 Raspar 2", id: ".raspar2" });
+              if (!sessao.reveladas[2]) bts.push({ label: "🔒 Raspar 3", id: ".raspar3" });
+              await enviarBotoes(
+                "🎁 Raspadinha",
+                `[ ${mostrar[0]} ] [ ${mostrar[1]} ] [ ${mostrar[2]} ]\nRaspando...`,
+                `Aposta: ${sessao.aposta} fichas`,
+                bts
+              );
+              return;
+            }
+
+            // Todas reveladas — resultado
+            sessoesJogo.delete(sender);
+            const s = sessao.simbolos;
+            let ganho = 0, msg;
+            if (s[0] === s[1] && s[1] === s[2]) {
+              if (s[0] === '💎') { ganho = sessao.aposta * 10; msg = '💎 JACKPOT TRIPLO! 10x'; }
+              else if (s[0] === '7️⃣') { ganho = sessao.aposta * 5; msg = '🎰 TRIPLO SETE! 5x'; }
+              else { ganho = sessao.aposta * 3; msg = '🎉 TRIPLO! 3x'; }
+            } else if (s[0] === s[1] || s[1] === s[2] || s[0] === s[2]) {
+              ganho = Math.floor(sessao.aposta * 1.5);
+              msg = '😊 PAR! 1.5x';
+            } else {
+              msg = '😢 Sem sorte!';
+            }
+            if (ganho > 0) { addFichas(sender, ganho); await reagir('🎉'); }
+            else { remFichas(sender, sessao.aposta); await reagir('😢'); }
+            return enviar(`🎁 *RASPADINHA — RESULTADO*\n\n[ ${s[0]} ] [ ${s[1]} ] [ ${s[2]} ]\n\n${msg}\n${ganho > 0 ? `🎉 +${ganho} fichas` : `💸 -${sessao.aposta} fichas`}\n💰 Saldo: ${getFichas(sender)} fichas`);
+          }
+        }
+
+        // --- DRAGÃO OU FÊNIX ---
+        if (sessao.jogo === 'dragao') {
+          if (cmd === 'dragao' || cmd === 'fenix') {
+            const escolha = cmd;
+            await reagir('🐉');
+            await digitar(2000);
+
+            const scoreDragao = parseFloat((Math.random() * 9).toFixed(1));
+            const scoreFenix  = parseFloat((Math.random() * 9).toFixed(1));
+            const distDragao  = Math.abs(7.5 - scoreDragao);
+            const distFenix   = Math.abs(7.5 - scoreFenix);
+
+            sessoesJogo.delete(sender);
+
+            let vencedor;
+            if (Math.abs(distDragao - distFenix) < 0.01) vencedor = 'empate';
+            else vencedor = distDragao < distFenix ? 'dragao' : 'fenix';
+
+            let resultado, ganho = 0;
+            if (vencedor === 'empate') {
+              ganho = Math.floor(sessao.aposta * 0.9);
+              addFichas(sender, ganho);
+              resultado = `🤝 *EMPATE!* Devolvidos ${ganho} fichas`;
+            } else if (vencedor === escolha) {
+              ganho = Math.floor(sessao.aposta * 1.9);
+              addFichas(sender, ganho);
+              resultado = `🎉 *VOCÊ GANHOU!* +${ganho} fichas`;
+              await reagir('🎉');
+            } else {
+              remFichas(sender, sessao.aposta);
+              resultado = `😢 *PERDEU!* -${sessao.aposta} fichas`;
+              await reagir('😢');
+            }
+
+            return enviar(`🐉🔥 *DRAGÃO ou FÊNIX*\n\n🐉 Dragão: *${scoreDragao}* pts\n🔥 Fênix: *${scoreFenix}* pts\n_(mais próximo de 7.5 vence)_\n\nVencedor: ${vencedor === 'empate' ? 'EMPATE' : vencedor === 'dragao' ? '🐉 Dragão' : '🔥 Fênix'}\nSua escolha: ${escolha === 'dragao' ? '🐉 Dragão' : '🔥 Fênix'}\n\n${resultado}\n💰 Saldo: ${getFichas(sender)} fichas`);
+          }
+        }
       }
 
-      switch (comandoLimpo) {
+      // ========== COMANDOS PRINCIPAIS ==========
+      switch (cmd) {
 
-        case 'menu':
-        case 'ajuda':
-        case 'start': {
-          await reagir('🤖');
-          await digitando(2000);
-          await enviarMenuLista();
+        // ----- MENU -----
+        case 'menu': case 'start': case 'inicio': {
+          await reagir('🎰');
+          await digitar(1500);
+          await enviarMenu();
           break;
         }
 
-        case 'planos': {
-          await reagir('💳');
-          await digitando(2000);
-          await enviarBotoes(
-            "💳 Planos Disponíveis",
-            "🟢 7 Dias — R$ 0,01\n🔵 15 Dias — R$ 19,90\n🟣 30 Dias — R$ 34,90",
-            "✅ Confirmação automática após pagamento",
-            [
-              { label: "🟢 7 Dias — R$ 0,01",   id: ".comprar 7d"  },
-              { label: "🔵 15 Dias — R$ 19,90",  id: ".comprar 15d" },
-              { label: "🟣 30 Dias — R$ 34,90",  id: ".comprar 30d" }
-            ]
-          );
-          break;
-        }
-
+        // ----- JOGOS -----
         case 'jogos': {
           await reagir('🎮');
-          await digitando(1500);
+          await digitar(1500);
           await enviarBotoes(
-            "🎮 Jogos",
-            `Seus coins: ${getCoins(sender)}\nTodos os jogos exigem plano ativo.`,
-            "Escolha um jogo para jogar",
+            "🎮 Escolha um Jogo",
+            `💰 Suas fichas: ${getFichas(sender)} 🪙\n\nTodos os jogos aceitam apostas.\nUse: .jogo [valor da aposta]`,
+            "Selecione ou use o comando",
             [
-              { label: "🎲 Dado (10 coins)",     id: ".dado 10"     },
-              { label: "🎰 Slot (10 coins)",      id: ".slot 10"     },
-              { label: "⚡ Duplicar (10 coins)",  id: ".duplicar 10" }
+              { label: "🎰 Slot — .slot 50",          id: ".slot 50"      },
+              { label: "🎲 Dado — .dado 50",           id: ".dado 50"      },
+              { label: "⚡ Duplicar — .duplicar 50",   id: ".duplicar 50"  },
+              { label: "🎡 Roleta — .roleta 50",       id: ".roleta 50"    },
+              { label: "🎁 Raspadinha — .raspadinha 50", id: ".raspadinha 50" },
+              { label: "🃏 Blackjack — .bj 50",        id: ".bj 50"        },
+              { label: "💣 Mines — .mines 50",         id: ".mines 50"     },
+              { label: "🗼 Torre — .torre 50",          id: ".torre 50"     },
+              { label: "💥 Crash — .crash 50",         id: ".crash 50"     },
+              { label: "🐉 Dragão ou Fênix — .dragao 50", id: ".dragao 50" }
             ]
           );
           break;
         }
 
-        case 'comprar': {
-          await reagir('💸');
-          if (!efipayReady) {
-            return enviar("⚠️ Sistema de pagamento temporariamente indisponível.\nEntre em contato com o dono.");
-          }
-          if (!q) return enviar(`💳 Use: ${prefixoUsado}comprar [7d, 15d, 30d]`);
-
-          const planType = q.toLowerCase().trim();
-          if (!PLANOS[planType]) return enviar('❌ Plano inválido! Use: 7d, 15d ou 30d');
-
-          await enviar('⏳ Gerando pagamento PIX...');
-
-          const pagamento = await gerarPagamentoPIX(sender, nome, planType);
-
-          if (!pagamento || pagamento.error) {
-            return enviar(`❌ Erro ao gerar pagamento: ${pagamento?.error || "Tente novamente."}`);
-          }
-
-          const planoSelecionado = PLANOS[planType];
-
-          // 1. Envia QR Code com informações do plano na caption
-          const infoCaption =
-            `💳 *PAGAMENTO PIX*\n\n` +
-            `📋 *Plano:* ${planoSelecionado.nome}\n` +
-            `💰 *Valor:* R$ ${planoSelecionado.valor.toFixed(2).replace('.', ',')}\n\n` +
-            `⏳ Após o pagamento a confirmação é automática!\n\n` +
-            `👇 Segue também o código Pix abaixo:`;
-
-          if (pagamento.qrCodeBase64) {
-            try {
-              const base64Data = pagamento.qrCodeBase64.replace(/^data:image\/\w+;base64,/, '');
-              const imageBuffer = Buffer.from(base64Data, 'base64');
-              await sock.sendMessage(from, { image: imageBuffer, caption: infoCaption }, { quoted: info });
-            } catch (imgErr) {
-              console.error('Erro ao enviar imagem do QR:', imgErr.message);
-              await enviar(infoCaption);
-            }
-          } else {
-            await enviar(infoCaption);
-          }
-
-          // 2. Envia Pix Copia e Cola isolado em monospace (evita link do WhatsApp)
-          await sleep(4000);
-          await sock.sendMessage(from, {
-            text: '```' + pagamento.copiaCola + '```'
-          }, { quoted: info });
-
-          // 3. Inicia monitoramento automático de pagamento
-          iniciarMonitoramentoPagamento(pagamento.txid, from, sock, planType, sender);
-
-          break;
-        }
-
-        case 'confirmar': {
-          if (!q) return enviar(`🔍 Use: ${prefixoUsado}confirmar [TXID]`);
-
-          const txid = q.toUpperCase().trim();
-          await enviar('⏳ Verificando pagamento...');
-
-          const status = await verificarPagamento(txid);
-
-          if (status === 'pago') {
-            enviar(`✅ *PAGAMENTO CONFIRMADO!*\n\n🎉 Seu plano foi ativado!\nAgora você tem acesso a todos os jogos!\n\nUse: ${prefixoUsado}menu`);
-          } else if (status === 'pendente') {
-            enviar('⏳ Pagamento ainda pendente. Aguarde alguns minutos e tente novamente.');
-          } else if (status === 'expirado') {
-            enviar('❌ PIX expirado. Gere um novo com: ' + prefixoUsado + 'comprar');
-          } else {
-            enviar('❌ Erro ao verificar pagamento. Tente novamente mais tarde.');
-          }
-          break;
-        }
-
-        case 'meuplano': {
-          await reagir('📋');
-          await digitando(1500);
-          if (!temPlanoAtivo) return enviar(`⚠️ Você não tem um plano ativo!\nUse ${prefixoUsado}planos para comprar.`);
-          const planoAtivo = getPlanoUsuario(sender);
-          if (planoAtivo) {
-            const expiraEm = new Date(planoAtivo.expiraEm);
-            const diasRestantes = Math.ceil((expiraEm - new Date()) / (1000 * 60 * 60 * 24));
-            enviar(`✅ *PLANO ATIVO*\n📋 Tipo: ${PLANOS[planoAtivo.plano]?.nome || planoAtivo.plano}\n📅 Expira em: ${diasRestantes} dia(s)\n📆 Data: ${expiraEm.toLocaleDateString('pt-BR')}`);
-          }
-          break;
-        }
-
+        // ----- PERFIL -----
         case 'perfil': {
           await reagir('👤');
-          await digitando(1500);
-          enviar(`📱 *PERFIL*\n👤 Nome: ${nome}\n💰 Coins: ${getCoins(sender)}\n📋 Plano: ${temPlanoAtivo ? "✅ Ativo" : "❌ Inativo"}`);
+          await digitar(1500);
+          const users  = lerJSON(usuariosPath);
+          const u      = users.find(u => u.id === sender);
+          const posRank = users.sort((a,b) => (b.fichas||0)-(a.fichas||0)).findIndex(u => u.id === sender) + 1;
+          enviar(
+            `👤 *PERFIL*\n${'─'.repeat(20)}\n` +
+            `Nome: *${nome}*\n` +
+            `💰 Fichas: *${getFichas(sender).toLocaleString('pt-BR')}* 🪙\n` +
+            `🏆 Ranking: *#${posRank}*\n` +
+            `📅 Membro desde: ${u?.criadoEm ? new Date(u.criadoEm).toLocaleDateString('pt-BR') : '?'}`
+          );
           break;
         }
 
+        // ----- BÔNUS DIÁRIO -----
+        case 'diario': case 'bonus': {
+          await reagir('🎁');
+          await digitar(1500);
+          if (!podePegarBonus(sender)) {
+            return enviar("⏰ Você já pegou seu bônus hoje!\nVolte amanhã para mais 100 fichas! 🎁");
+          }
+          registrarBonus(sender);
+          addFichas(sender, 100);
+          await reagir('🎉');
+          enviar(`🎁 *BÔNUS DIÁRIO!*\n\n+100 fichas adicionadas! 🪙\n💰 Novo saldo: *${getFichas(sender)} fichas*\n\nVolte amanhã para mais! 🍀`);
+          break;
+        }
+
+        // ----- RANKING -----
         case 'rank': {
           await reagir('🏆');
-          await digitando(1500);
-          const usuarios = lerJSON(usuariosPath);
-          usuarios.sort((a, b) => (b.coins || 0) - (a.coins || 0));
-          let rankMsg = `🏆 *RANKING TOP 10* 🏆\n\n`;
-          usuarios.slice(0, 10).forEach((user, index) => {
-            const medalha = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
-            rankMsg += `${medalha} ${user.nome.substring(0, 20)} — ${user.coins || 0} coins\n`;
+          await digitar(1500);
+          const users = lerJSON(usuariosPath).sort((a, b) => (b.fichas||0) - (a.fichas||0));
+          const medalhas = ['🥇','🥈','🥉'];
+          let msg = `🏆 *TOP 10 — CASINO BOT*\n${'═'.repeat(22)}\n\n`;
+          users.slice(0, 10).forEach((u, i) => {
+            msg += `${medalhas[i] || `${i+1}.`} ${u.nome.substring(0,18)} — *${(u.fichas||0).toLocaleString('pt-BR')}* 🪙\n`;
           });
-          enviar(rankMsg);
+          enviar(msg);
           break;
         }
 
-        case 'dado': {
-          const apostaDado = parseInt(q);
-          if (isNaN(apostaDado) || apostaDado <= 0) return enviar(`🎲 Use: ${prefixoUsado}dado [valor]\nEx: ${prefixoUsado}dado 10`);
-          if (getCoins(sender) < apostaDado) return enviar(`❌ Você tem apenas ${getCoins(sender)} coins.`);
-
-          await reagir('🎲');
-          await digitando(2000);
-
-          const num = jogarDado();
-          const ganhouDado = num === 6;
-          const premioDado = ganhouDado ? apostaDado * 5 : 0;
-
-          if (ganhouDado) adicionarCoins(sender, premioDado);
-          else removerCoins(sender, apostaDado);
-
-          await reagir(ganhouDado ? '🎉' : '😢');
-          enviar(`🎲 *DADO*\nVocê tirou: *${num}*\nAposta: ${apostaDado} coins\n${ganhouDado ? `🎉 GANHOU +${premioDado} coins!` : '😢 PERDEU!'}\n💰 Saldo: ${getCoins(sender)} coins`);
+        // ----- RECARREGAR -----
+        case 'recarregar': case 'recarga': {
+          await reagir('💳');
+          await digitar(1500);
+          await enviarBotoes(
+            "💳 Recarga de Fichas",
+            `1 real = 1 ficha 🪙\nSaldo atual: ${getFichas(sender)} fichas`,
+            "Escolha o valor da recarga",
+            [
+              { label: "💵 R$ 10 = 10 fichas",   id: ".pix 10"  },
+              { label: "💵 R$ 25 = 25 fichas",   id: ".pix 25"  },
+              { label: "💵 R$ 50 = 50 fichas",   id: ".pix 50"  },
+              { label: "💵 R$ 100 = 100 fichas", id: ".pix 100" }
+            ]
+          );
           break;
         }
 
+        case 'pix': {
+          await reagir('💸');
+          const valor = parseFloat(q);
+          if (isNaN(valor) || valor < 1) return enviar("❌ Use: .pix [valor]\nEx: .pix 50");
+          await enviar('⏳ Gerando PIX...');
+          const pag = await gerarRecargaPix(sender, valor);
+          if (pag.error) return enviar(`❌ Erro: ${pag.error}`);
+          if (pag.qrCodeBase64) {
+            try {
+              const buf = Buffer.from(pag.qrCodeBase64.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+              await sock.sendMessage(from, { image: buf, caption: `💳 *PIX — R$ ${valor.toFixed(2)}*\n🎰 +${Math.floor(valor)} fichas após confirmação!\n⏳ Válido por 1 hora.` }, { quoted: info });
+            } catch { await enviar(`💳 *PIX — R$ ${valor.toFixed(2)}*\n🎰 +${Math.floor(valor)} fichas!`); }
+          }
+          await sleep(3000);
+          await sock.sendMessage(from, { text: '```' + pag.copiaCola + '```' }, { quoted: info });
+          monitorarRecarga(pag.txid, from, sock);
+          break;
+        }
+
+        // ----- SLOT — COM ANIMAÇÃO DE EDIÇÃO ==========
         case 'slot': {
-          const apostaSlot = parseInt(q);
-          if (isNaN(apostaSlot) || apostaSlot <= 0) return enviar(`🎰 Use: ${prefixoUsado}slot [valor]`);
-          if (getCoins(sender) < apostaSlot) return enviar(`❌ Você tem apenas ${getCoins(sender)} coins.`);
-
+          const ap = parseInt(q);
+          if (isNaN(ap) || ap <= 0) return enviar(`🎰 Use: .slot [aposta]\nEx: .slot 50`);
+          if (getFichas(sender) < ap) return enviar(`❌ Fichas insuficientes! Você tem ${getFichas(sender)} 🪙`);
           await reagir('🎰');
-          await digitando(2000);
 
-          const resultado = jogarSlot();
-          const ganho = calcularGanhoSlot(resultado, apostaSlot);
+          // Animação de giro
+          const msgAnim = await sock.sendMessage(from, { text: `🎰 *SLOT MACHINE*\n\n[ 🔄 ] [ 🔄 ] [ 🔄 ]\n\n_Girando..._` }, { quoted: info });
+          await sleep(400);
 
-          if (ganho > 0) adicionarCoins(sender, ganho);
-          else removerCoins(sender, apostaSlot);
+          const frames = [
+            `[ ${SLOT_EMOJIS[Math.floor(Math.random()*7)]} ] [ 🔄 ] [ 🔄 ]`,
+            `[ ${SLOT_EMOJIS[Math.floor(Math.random()*7)]} ] [ ${SLOT_EMOJIS[Math.floor(Math.random()*7)]} ] [ 🔄 ]`,
+          ];
+          for (const f of frames) {
+            await sleep(500);
+            await sock.sendMessage(from, { text: `🎰 *SLOT MACHINE*\n\n${f}\n\n_Girando..._`, edit: msgAnim.key });
+          }
 
-          await reagir(ganho > 0 ? '🎉' : '😢');
-          enviar(`🎰 *CAÇA-NÍQUEIS*\n[ ${resultado[0]} ] [ ${resultado[1]} ] [ ${resultado[2]} ]\nAposta: ${apostaSlot} coins\n${ganho > 0 ? `🎉 GANHOU +${ganho} coins! (${ganho / apostaSlot}x)` : '😢 PERDEU!'}\n💰 Saldo: ${getCoins(sender)} coins`);
+          const res  = gerarSlot();
+          const info2 = calcularGanhoSlot(res, ap);
+
+          await sleep(500);
+          if (info2.ganho > 0) { addFichas(sender, info2.ganho); await reagir('🎉'); }
+          else { remFichas(sender, ap); await reagir('😢'); }
+
+          await sock.sendMessage(from, {
+            text: `🎰 *SLOT MACHINE*\n\n[ ${res[0]} ] [ ${res[1]} ] [ ${res[2]} ]\n\n${info2.msg}\n${info2.ganho > 0 ? `🎉 +${info2.ganho} fichas` : `💸 -${ap} fichas`}\n💰 Saldo: ${getFichas(sender)} fichas`,
+            edit: msgAnim.key
+          });
           break;
         }
 
+        // ----- DADO -----
+        case 'dado': {
+          const ap = parseInt(q);
+          if (isNaN(ap) || ap <= 0) return enviar(`🎲 Use: .dado [aposta]`);
+          if (getFichas(sender) < ap) return enviar(`❌ Fichas insuficientes!`);
+          await reagir('🎲');
+          await digitar(2000);
+          const num  = Math.floor(Math.random() * 6) + 1;
+          const gan  = num === 6;
+          const dds  = ['⚀','⚁','⚂','⚃','⚄','⚅'];
+          if (gan) { addFichas(sender, ap * 5); await reagir('🎉'); }
+          else { remFichas(sender, ap); await reagir('😢'); }
+          enviar(`🎲 *DADO*\n\n${dds[num-1]} Você tirou: *${num}*\nAposta: ${ap} fichas\n\n${gan ? `🎉 GANHOU! Tirou 6! +${ap*5} fichas` : `😢 PERDEU! Precisava de 6.`}\n💰 Saldo: ${getFichas(sender)} fichas`);
+          break;
+        }
+
+        // ----- DUPLICAR -----
         case 'duplicar': {
-          const apostaDup = parseInt(q);
-          if (isNaN(apostaDup) || apostaDup <= 0) return enviar(`⚡ Use: ${prefixoUsado}duplicar [valor]`);
-          if (getCoins(sender) < apostaDup) return enviar(`❌ Você tem apenas ${getCoins(sender)} coins.`);
-
+          const ap = parseInt(q);
+          if (isNaN(ap) || ap <= 0) return enviar(`⚡ Use: .duplicar [aposta]`);
+          if (getFichas(sender) < ap) return enviar(`❌ Fichas insuficientes!`);
           await reagir('⚡');
-          await digitando(2000);
+          await digitar(2500);
+          const ganhou = Math.random() < 0.5;
+          if (ganhou) { addFichas(sender, ap); await reagir('🎉'); enviar(`🎉 *DUPLICOU!*\n\n+${ap} fichas! 🪙\n💰 Saldo: ${getFichas(sender)} fichas`); }
+          else { remFichas(sender, ap); await reagir('💀'); enviar(`💀 *PERDEU!*\n\n-${ap} fichas 😢\n💰 Saldo: ${getFichas(sender)} fichas`); }
+          break;
+        }
 
-          const ganhouDup = Math.random() < 0.5;
-          if (ganhouDup) {
-            adicionarCoins(sender, apostaDup);
+        // ----- ROLETA — COM ANIMAÇÃO ==========
+        case 'roleta': {
+          const partes = q.trim().split(' ');
+          const ap     = parseInt(partes[0]);
+          const tipo   = (partes[1] || '').toLowerCase().replace('í','i').replace('ê','e');
+          const tiposValidos = ['vermelho','preto','par','impar','1-12','13-24','25-36'];
+          if (isNaN(ap) || ap <= 0) return enviar(`🎡 Use: .roleta [aposta] [tipo]\nTipos: vermelho, preto, par, impar, 1-12, 13-24, 25-36, ou número (0-36)\nEx: .roleta 50 vermelho`);
+          const isNumero = !isNaN(parseInt(tipo)) && parseInt(tipo) >= 0 && parseInt(tipo) <= 36;
+          if (!tiposValidos.includes(tipo) && !isNumero) return enviar(`❌ Tipo inválido!\nTipos: vermelho, preto, par, impar, 1-12, 13-24, 25-36, ou número 0-36`);
+          if (getFichas(sender) < ap) return enviar(`❌ Fichas insuficientes!`);
+          await reagir('🎡');
+
+          // Animação girando
+          const cores = ['🔴','⚫','🔴','⚫','🔴','⚫','🟢'];
+          const msgAnim = await sock.sendMessage(from, { text: `🎡 *ROLETA*\n\n${cores.join(' ')}\n\n_A roleta está girando..._` }, { quoted: info });
+
+          for (let i = 0; i < 6; i++) {
+            await sleep(350);
+            const frame = cores.slice(i % cores.length).concat(cores.slice(0, i % cores.length));
+            await sock.sendMessage(from, { text: `🎡 *ROLETA*\n\n${frame.join(' ')}\n\n_Girando..._`, edit: msgAnim.key });
+          }
+
+          const resultado = ROLETA[Math.floor(Math.random() * ROLETA.length)];
+          const ganho    = Math.floor(calcularGanhoRoleta(ap, tipo, resultado));
+
+          await sleep(400);
+          if (ganho > 0) { addFichas(sender, ganho); await reagir('🎉'); }
+          else { remFichas(sender, ap); await reagir('😢'); }
+
+          await sock.sendMessage(from, {
+            text: `🎡 *ROLETA — RESULTADO*\n\n${resultado.cor} Número: *${resultado.n}*\nSua aposta: *${tipo}*\n\n${ganho > 0 ? `🎉 GANHOU! +${ganho} fichas` : `😢 PERDEU! -${ap} fichas`}\n💰 Saldo: ${getFichas(sender)} fichas`,
+            edit: msgAnim.key
+          });
+          break;
+        }
+
+        // ----- BLACKJACK -----
+        case 'bj': case 'blackjack': {
+          const ap = parseInt(q);
+          if (isNaN(ap) || ap <= 0) return enviar(`🃏 Use: .bj [aposta]`);
+          if (getFichas(sender) < ap) return enviar(`❌ Fichas insuficientes!`);
+          if (sessoesJogo.has(sender)) return enviar("⚠️ Você já tem um jogo ativo! Termine-o primeiro.");
+          await reagir('🃏');
+          await digitar(1500);
+          const baralho = criarBaralho();
+          const maoJ = [baralho.pop(), baralho.pop()];
+          const maoD = [baralho.pop(), baralho.pop()];
+          const totalJ = calcMao(maoJ);
+          sessoesJogo.set(sender, { jogo: 'bj', aposta: ap, maoJogador: maoJ, maoDealer: maoD, baralho });
+          if (totalJ === 21) {
+            const ganho = Math.floor(ap * 2.5);
+            addFichas(sender, ganho);
+            sessoesJogo.delete(sender);
             await reagir('🎉');
-            enviar(`🎉 DUPLICOU! +${apostaDup} coins!\n💰 Saldo: ${getCoins(sender)} coins`);
-          } else {
-            removerCoins(sender, apostaDup);
-            await reagir('💀');
-            enviar(`💀 PERDEU! -${apostaDup} coins\n💰 Saldo: ${getCoins(sender)} coins`);
+            return enviar(`🃏 *BLACKJACK NATURAL!* 21!\n\nSua mão: ${exibirMao(maoJ)} = *21*\n🎊 +${ganho} fichas (2.5x)!\n💰 Saldo: ${getFichas(sender)} fichas`);
           }
+          await enviarBotoes(
+            "🃏 Blackjack",
+            `Sua mão: ${exibirMao(maoJ)} = *${totalJ}*\nDealer: ${exibirMao([maoD[0]])} ?`,
+            `Aposta: ${ap} fichas | Objetivo: chegar mais perto de 21`,
+            [{ label: "🃏 Pedir carta", id: ".pedir" }, { label: "🛑 Parar", id: ".parar" }]
+          );
           break;
         }
 
-        case 'dono':
-        case 'criador': {
-          await reagir('👑');
-          await digitando(1500);
-          enviar(`👑 *CRIADO POR:*\n📱 wa.me/${dono.split('@')[0]}\n💳 Pagamentos via Efí Bank PIX`);
+        // ----- MINES -----
+        case 'mines': {
+          const ap = parseInt(q);
+          if (isNaN(ap) || ap <= 0) return enviar(`💣 Use: .mines [aposta]`);
+          if (getFichas(sender) < ap) return enviar(`❌ Fichas insuficientes!`);
+          if (sessoesJogo.has(sender)) return enviar("⚠️ Você já tem um jogo ativo!");
+          await reagir('💣');
+          await digitar(1500);
+          const bombas = gerarMines(3);
+          const sessaoMines = { jogo: 'mines', aposta: ap, bombas, reveladas: [] };
+          sessoesJogo.set(sender, sessaoMines);
+          await enviar(montarTextoBoardMines(sessaoMines));
+          await sleep(500);
+          await enviarBotoes(
+            "💣 Mines",
+            "Clique nas células para revelar gemas 💎\nEvite as bombas 💣",
+            `3 bombas escondidas | Aposta: ${ap} fichas`,
+            Array.from({length: 9}, (_, i) => ({ label: `🔒 ${i+1}`, id: `.celula${i}` }))
+          );
           break;
         }
 
-        default:
-          if (comandoLimpo) {
-            enviar(`❌ Comando "${prefixoUsado}${comandoLimpo}" não encontrado.\nDigite ${prefixoUsado}menu`);
-          }
+        // ----- TORRE -----
+        case 'torre': {
+          const ap = parseInt(q);
+          if (isNaN(ap) || ap <= 0) return enviar(`🗼 Use: .torre [aposta]`);
+          if (getFichas(sender) < ap) return enviar(`❌ Fichas insuficientes!`);
+          if (sessoesJogo.has(sender)) return enviar("⚠️ Você já tem um jogo ativo!");
+          await reagir('🗼');
+          await digitar(1500);
+          const portasCertas = Array.from({length: 5}, () => Math.floor(Math.random() * 3) + 1);
+          sessoesJogo.set(sender, { jogo: 'torre', aposta: ap, andarAtual: 1, portasCertas });
+          await enviarBotoes(
+            "🗼 Torre — Andar 1/5",
+            `Multiplicadores: 1.5x → 2.5x → 4x → 7x → 15x\nEscolha a porta certa para subir!`,
+            `Aposta: ${ap} fichas | 1 porta certa, 2 armadilhas`,
+            [
+              { label: "🚪 Porta 1", id: ".porta1" },
+              { label: "🚪 Porta 2", id: ".porta2" },
+              { label: "🚪 Porta 3", id: ".porta3" }
+            ]
+          );
           break;
+        }
+
+        // ----- CRASH -----
+        case 'crash': {
+          const ap = parseInt(q);
+          if (isNaN(ap) || ap <= 0) return enviar(`💥 Use: .crash [aposta]`);
+          if (getFichas(sender) < ap) return enviar(`❌ Fichas insuficientes!`);
+          if (sessoesJogo.has(sender)) return enviar("⚠️ Você já tem um jogo ativo!");
+          await reagir('🚀');
+
+          const crashPoint = gerarCrashPoint();
+          let mult = 1.00;
+          const sessaoCrash = { jogo: 'crash', aposta: ap, multAtual: mult, crashPoint, timer: null };
+          sessoesJogo.set(sender, sessaoCrash);
+
+          const msgCrash = await sock.sendMessage(from, { text: `💥 *CRASH*\n\n🚀 *${mult.toFixed(2)}x*\n\n_Mande .ejetar para sacar!\nAposta: ${ap} fichas_` }, { quoted: info });
+
+          const timer = setInterval(async () => {
+            if (!sessoesJogo.has(sender)) return clearInterval(timer);
+            const s = sessoesJogo.get(sender);
+            s.multAtual = parseFloat((s.multAtual + 0.10 + s.multAtual * 0.03).toFixed(2));
+
+            if (s.multAtual >= crashPoint) {
+              clearInterval(timer);
+              sessoesJogo.delete(sender);
+              remFichas(sender, ap);
+              try {
+                await sock.sendMessage(from, {
+                  text: `💥 *CRASH!*\n\n💣 Crashou em *${s.multAtual.toFixed(2)}x*!\n😢 PERDEU ${ap} fichas!\n💰 Saldo: ${getFichas(sender)} fichas`,
+                  edit: msgCrash.key
+                });
+              } catch {}
+              return;
+            }
+
+            try {
+              await sock.sendMessage(from, {
+                text: `💥 *CRASH*\n\n🚀 *${s.multAtual.toFixed(2)}x* ↗️\n\n_Mande .ejetar para sacar!\nAposta: ${ap} fichas | Potencial: ${Math.floor(ap * s.multAtual)} fichas_`,
+                edit: msgCrash.key
+              });
+            } catch {}
+          }, 2000);
+
+          sessaoCrash.timer = timer;
+          break;
+        }
+
+        // ----- RASPADINHA -----
+        case 'raspadinha': case 'raspar': {
+          const ap = parseInt(q);
+          if (isNaN(ap) || ap <= 0) return enviar(`🎁 Use: .raspadinha [aposta]`);
+          if (getFichas(sender) < ap) return enviar(`❌ Fichas insuficientes!`);
+          if (sessoesJogo.has(sender)) return enviar("⚠️ Você já tem um jogo ativo!");
+          await reagir('🎁');
+          await digitar(1500);
+          const simb = ['🍒','💎','7️⃣','⭐','🍋','🔔'];
+          const simbolos = Array(3).fill(0).map(() => simb[Math.floor(Math.random() * simb.length)]);
+          sessoesJogo.set(sender, { jogo: 'raspadinha', aposta: ap, simbolos, reveladas: [false, false, false] });
+          await enviarBotoes(
+            "🎁 Raspadinha",
+            `[ 🔒 ] [ 🔒 ] [ 🔒 ]\nRaspe as 3 células!`,
+            `Aposta: ${ap} fichas`,
+            [
+              { label: "🔒 Raspar 1", id: ".raspar1" },
+              { label: "🔒 Raspar 2", id: ".raspar2" },
+              { label: "🔒 Raspar 3", id: ".raspar3" }
+            ]
+          );
+          break;
+        }
+
+        // ----- DRAGÃO OU FÊNIX -----
+        case 'dragao': {
+          const ap = parseInt(q);
+          if (isNaN(ap) || ap <= 0) return enviar(`🐉 Use: .dragao [aposta]`);
+          if (getFichas(sender) < ap) return enviar(`❌ Fichas insuficientes!`);
+          if (sessoesJogo.has(sender)) return enviar("⚠️ Você já tem um jogo ativo!");
+          await reagir('🐉');
+          await digitar(1000);
+          sessoesJogo.set(sender, { jogo: 'dragao', aposta: ap });
+          await enviarBotoes(
+            "🐉🔥 Dragão ou Fênix",
+            `Escolha um lado!\nO mais próximo de 7.5 pontos vence.\n\nEmpate = 90% devolvido`,
+            `Aposta: ${ap} fichas`,
+            [
+              { label: "🐉 Dragão",  id: ".dragao"  },
+              { label: "🔥 Fênix",   id: ".fenix"   }
+            ]
+          );
+          break;
+        }
+
+        // ----- COMANDOS DO DONO -----
+        case 'ligar': {
+          if (!ehDono) return enviar("❌ Apenas o dono pode usar este comando.");
+          botAtivo = true; return enviar("✅ Bot ligado!");
+        }
+        case 'desligar': {
+          if (!ehDono) return enviar("❌ Apenas o dono pode usar este comando.");
+          botAtivo = false; return enviar("🔴 Bot desligado!");
+        }
+        case 'darfichas': {
+          if (!ehDono) return enviar("❌ Apenas o dono pode usar este comando.");
+          const [num, qtd] = q.split(' ');
+          if (!num || !qtd) return enviar("❌ Use: .darfichas [número] [quantidade]");
+          addFichas(`${num}@s.whatsapp.net`, parseInt(qtd));
+          return enviar(`✅ ${qtd} fichas adicionadas para ${num}`);
+        }
+
+        default: {
+          if (cmd) enviar(`❌ Comando não encontrado.\nDigite .menu para ver as opções.`);
+          break;
+        }
       }
 
-    } catch (erro) {
-      console.error(chalk.red("❌ Erro no handler:"), erro.message);
+    } catch (err) {
+      console.error(chalk.red("❌ Erro no handler:"), err.message);
     }
   });
 }
