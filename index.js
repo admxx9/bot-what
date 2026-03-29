@@ -184,10 +184,6 @@ async function gerarPagamentoPIX(userId, userNome, planType) {
 
     const body = {
       calendario: { expiracao: 3600 },
-      devedor: {
-        nome: userNome.substring(0, 30),
-        cpf: '12345678909' // use o CPF real do cliente em produção
-      },
       valor: { original: plano.valor.toFixed(2) },
       chave: EFI_PIX_KEY,
       solicitacaoPagador: `Plano ${plano.nome} - ${userId.split('@')[0]}`
