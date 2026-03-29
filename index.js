@@ -506,37 +506,34 @@ async function iniciarBot() {
 
           const planoSelecionado = PLANOS[planType];
 
-          // 1. Envia QR Code como imagem (sem caption)
+          // 1. Envia QR Code com informações do plano na caption
+          const infoCaption =
+            `💳 *PAGAMENTO PIX*\n\n` +
+            `📋 *Plano:* ${planoSelecionado.nome}\n` +
+            `💰 *Valor:* R$ ${planoSelecionado.valor.toFixed(2).replace('.', ',')}\n\n` +
+            `⏳ Após o pagamento a confirmação é automática!\n\n` +
+            `👇 Segue também o código Pix abaixo:`;
+
           if (pagamento.qrCodeBase64) {
             try {
               const base64Data = pagamento.qrCodeBase64.replace(/^data:image\/\w+;base64,/, '');
               const imageBuffer = Buffer.from(base64Data, 'base64');
-              await sock.sendMessage(from, { image: imageBuffer }, { quoted: info });
+              await sock.sendMessage(from, { image: imageBuffer, caption: infoCaption }, { quoted: info });
             } catch (imgErr) {
               console.error('Erro ao enviar imagem do QR:', imgErr.message);
+              await enviar(infoCaption);
             }
+          } else {
+            await enviar(infoCaption);
           }
 
-          // 2. Envia informações do plano (com delay para evitar detecção)
-          await sleep(6000);
-          await enviar(
-            `💳 *PAGAMENTO PIX*\n\n` +
-            `📋 *Plano:* ${planoSelecionado.nome}\n` +
-            `💰 *Valor:* R$ ${planoSelecionado.valor.toFixed(2).replace('.', ',')}\n\n` +
-            `📲 Escaneie o QR code acima ou copie o código Pix abaixo.`
-          );
-
-          // 3. Envia Pix Copia e Cola isolado em monospace (evita link do WhatsApp)
-          await sleep(3000);
+          // 2. Envia Pix Copia e Cola isolado em monospace (evita link do WhatsApp)
+          await sleep(4000);
           await sock.sendMessage(from, {
             text: '```' + pagamento.copiaCola + '```'
           }, { quoted: info });
 
-          // 4. Mensagem final
-          await sleep(3000);
-          await enviar('⏳ Após o pagamento a confirmação é automática!');
-
-          // 5. Inicia monitoramento automático de pagamento
+          // 3. Inicia monitoramento automático de pagamento
           iniciarMonitoramentoPagamento(pagamento.txid, from, sock, planType, sender);
 
           break;
