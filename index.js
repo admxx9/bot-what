@@ -403,14 +403,10 @@ async function iniciarBot() {
       let conteudo = info.message?.conversation ||
                        info.message?.extendedTextMessage?.text ||
                        info.message?.listResponseMessage?.singleSelectReply?.selectedRowId ||
-                       info.message?.buttonsResponseMessage?.selectedButtonId || "";
+                       info.message?.buttonsResponseMessage?.selectedButtonId ||
+                       info.message?.templateButtonReplyMessage?.selectedId || "";
 
-      // Log temporário para debug de clique em botões
-      if (!conteudo) {
-        console.log('[DEBUG BTN]', JSON.stringify(info.message, null, 2));
-      }
-
-      // Captura clique em botões interativos (nativeFlowMessage)
+      // Captura clique em botões interativos (nativeFlowMessage / interactiveResponseMessage)
       if (!conteudo && info.message?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson) {
         try {
           const parsed = JSON.parse(info.message.interactiveResponseMessage.nativeFlowResponseMessage.paramsJson);
