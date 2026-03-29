@@ -395,10 +395,18 @@ async function iniciarBot() {
       const ehGrupo = from.endsWith('@g.us');
       const sender  = ehGrupo ? info.key.participant : from;
       const nome    = info.pushName || "Usuário";
-      const conteudo = info.message?.conversation ||
+      let conteudo = info.message?.conversation ||
                        info.message?.extendedTextMessage?.text ||
                        info.message?.listResponseMessage?.singleSelectReply?.selectedRowId ||
                        info.message?.buttonsResponseMessage?.selectedButtonId || "";
+
+      // Captura clique em botões interativos (nativeFlowMessage)
+      if (!conteudo && info.message?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson) {
+        try {
+          const parsed = JSON.parse(info.message.interactiveResponseMessage.nativeFlowResponseMessage.paramsJson);
+          conteudo = parsed.id || "";
+        } catch {}
+      }
 
       const args = conteudo.trim().split(/ +/).slice(1);
       const comando = conteudo.toLowerCase().split(" ")[0];
@@ -408,43 +416,42 @@ async function iniciarBot() {
       const enviar = (texto) => sock.sendMessage(from, { text: texto }, { quoted: info });
       const reagir = (emoji) => sock.sendMessage(from, { react: { text: emoji, key: info.key } });
       const digitando = async (ms = 2000) => {
+        await sock.sendPresenceUpdate('available', from);
         await sock.sendPresenceUpdate('composing', from);
         await sleep(ms);
         await sock.sendPresenceUpdate('paused', from);
       };
 
+      const enviarBotoes = async (bodyText, footerText, botoes) => {
+        await sock.sendMessage(from, {
+          interactiveMessage: {
+            body: { text: bodyText },
+            footer: { text: footerText },
+            header: { hasMediaAttachment: false },
+            nativeFlowMessage: {
+              buttons: botoes.map(b => ({
+                name: "quick_reply",
+                buttonParamsJson: JSON.stringify({ display_text: b.label, id: b.id })
+              })),
+              messageParamsJson: ""
+            }
+          }
+        }, { quoted: info });
+      };
+
       const enviarMenuLista = async () => {
         const planoStatus = isUsuarioAtivo(sender) ? "✅ Ativo" : "❌ Inativo";
-        const prefixo = '.';
-        const menuTexto =
-          `╭━━━━━━━━━━━━━━━━━╮\n` +
-          `┃   🤖 *MEU BOT*   ┃\n` +
-          `╰━━━━━━━━━━━━━━━━━╯\n\n` +
-          `👤 *${nome}*\n` +
-          `💰 Coins: *${getCoins(sender)}*\n` +
-          `📋 Plano: *${planoStatus}*\n\n` +
-          `━━━━━━━━━━━━━━━━━━━\n` +
-          `🏠 *GERAL*\n` +
-          `━━━━━━━━━━━━━━━━━━━\n` +
-          `👤 ${prefixo}perfil — Ver seus dados\n` +
-          `🏆 ${prefixo}rank — Top 10 usuários\n` +
-          `👑 ${prefixo}dono — Info do criador\n\n` +
-          `━━━━━━━━━━━━━━━━━━━\n` +
-          `💳 *PLANOS*\n` +
-          `━━━━━━━━━━━━━━━━━━━\n` +
-          `📋 ${prefixo}planos — Ver preços\n` +
-          `🛒 ${prefixo}comprar 7d — R$ 0,01 (Teste)\n` +
-          `🛒 ${prefixo}comprar 15d — R$ 19,90\n` +
-          `🛒 ${prefixo}comprar 30d — R$ 34,90\n` +
-          `📅 ${prefixo}meuplano — Meu plano ativo\n\n` +
-          `━━━━━━━━━━━━━━━━━━━\n` +
-          `🎮 *JOGOS* _(requer plano)_\n` +
-          `━━━━━━━━━━━━━━━━━━━\n` +
-          `🎲 ${prefixo}dado [valor] — Aposte no dado\n` +
-          `🎰 ${prefixo}slot [valor] — Caça-níqueis\n` +
-          `⚡ ${prefixo}duplicar [valor] — 50/50\n\n` +
-          `╰━━━━━━━━━━━━━━━━━╯`;
-        await sock.sendMessage(from, { text: menuTexto }, { quoted: info });
+        await enviarBotoes(
+          `🤖 *MEU BOT*\n\n👤 ${nome}\n💰 Coins: ${getCoins(sender)}\n📋 Plano: ${planoStatus}`,
+          "Selecione uma opção abaixo 👇",
+          [
+            { label: "👤 Meu Perfil",  id: ".perfil"  },
+            { label: "💳 Ver Planos",  id: ".planos"  },
+            { label: "🎮 Jogos",       id: ".jogos"   },
+            { label: "🏆 Ranking",     id: ".rank"    },
+            { label: "📅 Meu Plano",   id: ".meuplano"}
+          ]
+        );
       };
 
       let prefixoUsado = null;
@@ -516,23 +523,30 @@ async function iniciarBot() {
         case 'planos': {
           await reagir('💳');
           await digitando(2000);
-          const planosTexto =
-            `╭━━━━━━━━━━━━━━━━━╮\n` +
-            `┃  💳 *PLANOS*  ┃\n` +
-            `╰━━━━━━━━━━━━━━━━━╯\n\n` +
-            `📋 Escolha o plano ideal para você:\n\n` +
-            `🟢 *7 Dias — R$ 0,01*\n` +
-            `   Plano teste, acesso completo\n` +
-            `   👉 .comprar 7d\n\n` +
-            `🔵 *15 Dias — R$ 19,90*\n` +
-            `   Acesso completo por 15 dias\n` +
-            `   👉 .comprar 15d\n\n` +
-            `🟣 *30 Dias — R$ 34,90*\n` +
-            `   Acesso completo por 30 dias\n` +
-            `   👉 .comprar 30d\n\n` +
-            `✅ _Confirmação automática após pagamento_\n` +
-            `╰━━━━━━━━━━━━━━━━━╯`;
-          await sock.sendMessage(from, { text: planosTexto }, { quoted: info });
+          await enviarBotoes(
+            `💳 *PLANOS DISPONÍVEIS*\n\n🟢 7 Dias — R$ 0,01 _(teste)_\n🔵 15 Dias — R$ 19,90\n🟣 30 Dias — R$ 34,90`,
+            "✅ Confirmação automática após pagamento",
+            [
+              { label: "🟢 Comprar 7 dias — R$ 0,01",  id: ".comprar 7d"  },
+              { label: "🔵 Comprar 15 dias — R$ 19,90", id: ".comprar 15d" },
+              { label: "🟣 Comprar 30 dias — R$ 34,90", id: ".comprar 30d" }
+            ]
+          );
+          break;
+        }
+
+        case 'jogos': {
+          await reagir('🎮');
+          await digitando(1500);
+          await enviarBotoes(
+            `🎮 *JOGOS*\n\n_Todos os jogos exigem plano ativo._\n\nSeus coins: *${getCoins(sender)}*`,
+            "Escolha um jogo abaixo 🎲",
+            [
+              { label: "🎲 Dado (10 coins)",      id: ".dado 10"      },
+              { label: "🎰 Slot (10 coins)",       id: ".slot 10"      },
+              { label: "⚡ Duplicar (10 coins)",   id: ".duplicar 10"  }
+            ]
+          );
           break;
         }
 
