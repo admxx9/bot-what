@@ -42,9 +42,9 @@ let dono = "5511999999999@s.whatsapp.net";
 // ⚠️ ALTERE com suas credenciais reais do painel Efí Bank
 const EFI_CLIENT_ID     = 'Client_Id_c5402771eee923060261f03590f4d8b82ce4b88c';
 const EFI_CLIENT_SECRET = 'Client_Secret_345bde04a214ac7e2464bbbb73b08b161ecfc2af';
-const EFI_SANDBOX       = true;   // false quando for produção
+const EFI_SANDBOX       = false;   // false quando for produção
 const EFI_PIX_KEY       = 'studiopecc@gmail.com';
-const EFI_CERT_PATH     = './certificado.pem'; // obrigatório para produção
+const EFI_CERT_PATH     = './certificado.p12'; // obrigatório para produção
 
 // Inicializa cliente Efí com integração própria via API REST
 // ⚠️ O certificado .p12 é obrigatório tanto em SANDBOX quanto em PRODUÇÃO
