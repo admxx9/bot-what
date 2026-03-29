@@ -518,7 +518,7 @@ async function iniciarBot() {
           }
 
           // 2. Envia informações do plano (com delay para evitar detecção)
-          await sleep(3000);
+          await sleep(6000);
           await enviar(
             `💳 *PAGAMENTO PIX*\n\n` +
             `📋 *Plano:* ${planoSelecionado.nome}\n` +
