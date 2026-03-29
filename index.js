@@ -19,6 +19,9 @@ const pino = require('pino');
 const chalk = require('chalk');
 const { v4: uuidv4 } = require('uuid');
 
+// ========== BOTÕES INTERATIVOS ==========
+const { sendButtons } = require('./buttons');
+
 // ========== SISTEMA DE PAGAMENTO EFÍ (INTEGRAÇÃO PRÓPRIA VIA API REST) ==========
 const EfiBankPix = require('./efipay');
 let efipay = null;
@@ -424,30 +427,14 @@ async function iniciarBot() {
         await sock.sendPresenceUpdate('paused', from);
       };
 
-      const enviarBotoes = async (titulo, bodyText, footerText, secoes) => {
-        // secoes = [{ titulo: "Seção", rows: [{ label, id, desc }] }]
-        const mensagemLista = generateWAMessageFromContent(
-          from,
-          proto.Message.fromObject({
-            listMessage: {
-              title: titulo,
-              description: bodyText,
-              footerText: footerText,
-              listType: proto.Message.ListMessage.ListType.SINGLE_SELECT,
-              buttonText: "🔽 Ver opções",
-              sections: secoes.map(s => ({
-                title: s.titulo,
-                rows: s.rows.map(r => ({
-                  title: r.label,
-                  description: r.desc || "",
-                  rowId: r.id
-                }))
-              }))
-            }
-          }),
-          { userJid: sock.user.id }
-        );
-        await sock.relayMessage(from, mensagemLista.message, { messageId: mensagemLista.key.id });
+      const enviarBotoes = async (titulo, bodyText, footerText, botoes) => {
+        // botoes = [{ label, id }]
+        await sendButtons(sock, from, {
+          title: titulo,
+          text: bodyText,
+          footer: footerText,
+          buttons: botoes.map(b => ({ id: b.id, text: b.label }))
+        });
       };
 
       const enviarMenuLista = async () => {
@@ -457,29 +444,11 @@ async function iniciarBot() {
           `👤 ${nome}\n💰 Coins: ${getCoins(sender)}\n📋 Plano: ${planoStatus}`,
           "Selecione uma opção abaixo",
           [
-            {
-              titulo: "🏠 Geral",
-              rows: [
-                { label: "👤 Meu Perfil",  id: ".perfil",   desc: "Ver seus dados"       },
-                { label: "🏆 Ranking",     id: ".rank",     desc: "Top 10 usuários"      },
-                { label: "👑 Criador",     id: ".dono",     desc: "Info do criador"      }
-              ]
-            },
-            {
-              titulo: "💳 Planos",
-              rows: [
-                { label: "📋 Ver Planos",    id: ".planos",    desc: "Preços e detalhes"        },
-                { label: "📅 Meu Plano",     id: ".meuplano",  desc: "Verificar plano ativo"    }
-              ]
-            },
-            {
-              titulo: "🎮 Jogos (requer plano)",
-              rows: [
-                { label: "🎲 Dado",      id: ".dado 10",     desc: "Aposte coins no dado"  },
-                { label: "🎰 Slot",      id: ".slot 10",     desc: "Caça-níqueis"          },
-                { label: "⚡ Duplicar",  id: ".duplicar 10", desc: "50/50 seus coins"      }
-              ]
-            }
+            { label: "👤 Meu Perfil",  id: ".perfil"   },
+            { label: "💳 Ver Planos",  id: ".planos"   },
+            { label: "🎮 Jogos",       id: ".jogos"    },
+            { label: "🏆 Ranking",     id: ".rank"     },
+            { label: "📅 Meu Plano",   id: ".meuplano" }
           ]
         );
       };
@@ -555,17 +524,12 @@ async function iniciarBot() {
           await digitando(2000);
           await enviarBotoes(
             "💳 Planos Disponíveis",
-            "Escolha o plano ideal para você:",
+            "🟢 7 Dias — R$ 0,01\n🔵 15 Dias — R$ 19,90\n🟣 30 Dias — R$ 34,90",
             "✅ Confirmação automática após pagamento",
             [
-              {
-                titulo: "💰 Planos",
-                rows: [
-                  { label: "🟢 7 Dias — R$ 0,01",  id: ".comprar 7d",  desc: "Plano teste, acesso completo"   },
-                  { label: "🔵 15 Dias — R$ 19,90", id: ".comprar 15d", desc: "Acesso completo por 15 dias"   },
-                  { label: "🟣 30 Dias — R$ 34,90", id: ".comprar 30d", desc: "Acesso completo por 30 dias"   }
-                ]
-              }
+              { label: "🟢 7 Dias — R$ 0,01",   id: ".comprar 7d"  },
+              { label: "🔵 15 Dias — R$ 19,90",  id: ".comprar 15d" },
+              { label: "🟣 30 Dias — R$ 34,90",  id: ".comprar 30d" }
             ]
           );
           break;
@@ -577,16 +541,11 @@ async function iniciarBot() {
           await enviarBotoes(
             "🎮 Jogos",
             `Seus coins: ${getCoins(sender)}\nTodos os jogos exigem plano ativo.`,
-            "Escolha um jogo abaixo",
+            "Escolha um jogo para jogar",
             [
-              {
-                titulo: "🎮 Jogos disponíveis",
-                rows: [
-                  { label: "🎲 Dado",     id: ".dado 10",     desc: "Aposte coins no dado (10 coins)"  },
-                  { label: "🎰 Slot",     id: ".slot 10",     desc: "Caça-níqueis (10 coins)"          },
-                  { label: "⚡ Duplicar", id: ".duplicar 10", desc: "50/50 seus coins (10 coins)"      }
-                ]
-              }
+              { label: "🎲 Dado (10 coins)",     id: ".dado 10"     },
+              { label: "🎰 Slot (10 coins)",      id: ".slot 10"     },
+              { label: "⚡ Duplicar (10 coins)",  id: ".duplicar 10" }
             ]
           );
           break;
