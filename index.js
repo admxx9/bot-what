@@ -415,43 +415,36 @@ async function iniciarBot() {
 
       const enviarMenuLista = async () => {
         const planoStatus = isUsuarioAtivo(sender) ? "✅ Ativo" : "❌ Inativo";
-        await sock.sendMessage(from, {
-          listMessage: {
-            title: '🤖 MEU BOT',
-            text: `👤 *${nome}*\n🎮 Coins: ${getCoins(sender)}\n📋 Plano: ${planoStatus}`,
-            footerText: 'Selecione uma opção abaixo',
-            buttonText: '📋 Ver opções',
-            listType: 1,
-            sections: [
-              {
-                title: '🏠 Geral',
-                rows: [
-                  { title: '👤 Perfil', description: 'Ver seus dados', rowId: '.perfil' },
-                  { title: '🏆 Ranking', description: 'Top 10 usuários', rowId: '.rank' },
-                  { title: '👑 Criador', description: 'Info do criador', rowId: '.dono' },
-                ]
-              },
-              {
-                title: '💳 Planos',
-                rows: [
-                  { title: '📋 Ver Planos', description: 'Preços e detalhes', rowId: '.planos' },
-                  { title: '🛒 Comprar 7 dias', description: 'R$ 0,01 – Teste', rowId: '.comprar 7d' },
-                  { title: '🛒 Comprar 15 dias', description: 'R$ 19,90', rowId: '.comprar 15d' },
-                  { title: '🛒 Comprar 30 dias', description: 'R$ 34,90', rowId: '.comprar 30d' },
-                  { title: '📅 Meu Plano', description: 'Verificar plano ativo', rowId: '.meuplano' },
-                ]
-              },
-              {
-                title: '🎮 Jogos (requer plano)',
-                rows: [
-                  { title: '🎲 Dado', description: 'Aposte coins no dado', rowId: '.dado 10' },
-                  { title: '🎰 Slot', description: 'Caça-níqueis', rowId: '.slot 10' },
-                  { title: '⚡ Duplicar', description: '50/50 seus coins', rowId: '.duplicar 10' },
-                ]
-              }
-            ]
-          }
-        }, { quoted: info });
+        const prefixo = '.';
+        const menuTexto =
+          `╭━━━━━━━━━━━━━━━━━╮\n` +
+          `┃   🤖 *MEU BOT*   ┃\n` +
+          `╰━━━━━━━━━━━━━━━━━╯\n\n` +
+          `👤 *${nome}*\n` +
+          `💰 Coins: *${getCoins(sender)}*\n` +
+          `📋 Plano: *${planoStatus}*\n\n` +
+          `━━━━━━━━━━━━━━━━━━━\n` +
+          `🏠 *GERAL*\n` +
+          `━━━━━━━━━━━━━━━━━━━\n` +
+          `👤 ${prefixo}perfil — Ver seus dados\n` +
+          `🏆 ${prefixo}rank — Top 10 usuários\n` +
+          `👑 ${prefixo}dono — Info do criador\n\n` +
+          `━━━━━━━━━━━━━━━━━━━\n` +
+          `💳 *PLANOS*\n` +
+          `━━━━━━━━━━━━━━━━━━━\n` +
+          `📋 ${prefixo}planos — Ver preços\n` +
+          `🛒 ${prefixo}comprar 7d — R$ 0,01 (Teste)\n` +
+          `🛒 ${prefixo}comprar 15d — R$ 19,90\n` +
+          `🛒 ${prefixo}comprar 30d — R$ 34,90\n` +
+          `📅 ${prefixo}meuplano — Meu plano ativo\n\n` +
+          `━━━━━━━━━━━━━━━━━━━\n` +
+          `🎮 *JOGOS* _(requer plano)_\n` +
+          `━━━━━━━━━━━━━━━━━━━\n` +
+          `🎲 ${prefixo}dado [valor] — Aposte no dado\n` +
+          `🎰 ${prefixo}slot [valor] — Caça-níqueis\n` +
+          `⚡ ${prefixo}duplicar [valor] — 50/50\n\n` +
+          `╰━━━━━━━━━━━━━━━━━╯`;
+        await sock.sendMessage(from, { text: menuTexto }, { quoted: info });
       };
 
       let prefixoUsado = null;
@@ -523,25 +516,23 @@ async function iniciarBot() {
         case 'planos': {
           await reagir('💳');
           await digitando(2000);
-          await sock.sendMessage(from, {
-            listMessage: {
-              title: '💳 Planos Disponíveis',
-              text: '📋 Escolha o plano ideal para você:',
-              footerText: '✅ Confirmação automática após pagamento',
-              buttonText: '🛒 Ver planos',
-              listType: 1,
-              sections: [
-                {
-                  title: '💰 Planos',
-                  rows: [
-                    { title: '🟢 7 Dias – R$ 0,01', description: 'Plano teste, acesso completo', rowId: '.comprar 7d' },
-                    { title: '🔵 15 Dias – R$ 19,90', description: 'Acesso completo por 15 dias', rowId: '.comprar 15d' },
-                    { title: '🟣 30 Dias – R$ 34,90', description: 'Acesso completo por 30 dias', rowId: '.comprar 30d' },
-                  ]
-                }
-              ]
-            }
-          }, { quoted: info });
+          const planosTexto =
+            `╭━━━━━━━━━━━━━━━━━╮\n` +
+            `┃  💳 *PLANOS*  ┃\n` +
+            `╰━━━━━━━━━━━━━━━━━╯\n\n` +
+            `📋 Escolha o plano ideal para você:\n\n` +
+            `🟢 *7 Dias — R$ 0,01*\n` +
+            `   Plano teste, acesso completo\n` +
+            `   👉 .comprar 7d\n\n` +
+            `🔵 *15 Dias — R$ 19,90*\n` +
+            `   Acesso completo por 15 dias\n` +
+            `   👉 .comprar 15d\n\n` +
+            `🟣 *30 Dias — R$ 34,90*\n` +
+            `   Acesso completo por 30 dias\n` +
+            `   👉 .comprar 30d\n\n` +
+            `✅ _Confirmação automática após pagamento_\n` +
+            `╰━━━━━━━━━━━━━━━━━╯`;
+          await sock.sendMessage(from, { text: planosTexto }, { quoted: info });
           break;
         }
 
