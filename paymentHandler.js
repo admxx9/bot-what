@@ -1,0 +1,168 @@
+// paymentHandler.js
+const Gerencianet = require('gerencianet');
+const axios = require('axios');
+const { v4: uuidv4 } = require('uuid');
+const fs = require('fs');
+
+// Configurações da Efí
+const EFI_CLIENT_ID = process.env.EFI_CLIENT_ID || 'Client_Id_c5402771eee923060261f03590f4d8b82ce4b88c';
+const EFI_CLIENT_SECRET = process.env.EFI_CLIENT_SECRET || 'Client_Secret_345bde04a214ac7e2464bbbb73b08b161ecfc2af';
+const EFI_SANDBOX = true; // true para testes, false para produção
+const EFI_PIX_KEY = process.env.EFI_PIX_KEY || 'studiopecc@gmail.com'; // email, celular, CPF
+const EFI_CERT_PATH = './certificado.pem'; // caminho do certificado
+
+// Planos disponíveis
+const PLANOS = {
+    '7d': { nome: '7 Dias - Teste', dias: 7, valor: 0.01 },
+    '15d': { nome: '15 Dias', dias: 15, valor: 19.90 },
+    '30d': { nome: '30 Dias', dias: 30, valor: 34.90 }
+};
+
+// Inicializa cliente Efí
+const options = {
+    client_id: EFI_CLIENT_ID,
+    client_secret: EFI_CLIENT_SECRET,
+    sandbox: EFI_SANDBOX,
+    certificate: fs.readFileSync(EFI_CERT_PATH)
+};
+
+const gerencianet = new Gerencianet(options);
+
+/**
+ * Gera pagamento PIX
+ */
+async function gerarPagamentoPIX(userId, userNome, planType) {
+    try {
+        const plano = PLANOS[planType];
+        if (!plano) return null;
+
+        // Gera ID único para transação (txid)
+        const txid = `TX${uuidv4().replace(/-/g, '').substring(0, 30)}`.toUpperCase();
+
+        // Dados da cobrança
+        const body = {
+            calendario: {
+                expiracao: 3600 // 1 hora
+            },
+            devedor: {
+                nome: userNome.substring(0, 30),
+                cpf: '12345678909' // Ideal: coletar do usuário
+            },
+            valor: {
+                original: plano.valor.toFixed(2)
+            },
+            chave: EFI_PIX_KEY,
+            solicitacaoPagador: `Plano ${plano.nome} - ${userId}`
+        };
+
+        // Cria cobrança
+        const cobranca = await gerencianet.pixCreateImmediateCharge(body);
+        
+        if (!cobranca || !cobranca.txid) {
+            console.log('Erro ao criar cobrança:', cobranca);
+            return null;
+        }
+
+        // Gera QR Code
+        const qrCode = await gerencianet.pixGenerateQRCode(cobranca.txid);
+
+        // Salva no banco de dados
+        const pagamento = {
+            txid: cobranca.txid,
+            userId: userId,
+            plano: planType,
+            valor: plano.valor,
+            status: 'pendente',
+            criadoEm: new Date(),
+            expiraEm: new Date(Date.now() + 3600000),
+            qrCode: qrCode.imagemQrCode,
+            copiaCola: qrCode.qrcode
+        };
+
+        await salvarPagamento(pagamento);
+
+        return {
+            txid: cobranca.txid,
+            qrCode: qrCode.imagemQrCode,
+            copiaCola: qrCode.qrcode,
+            valor: plano.valor,
+            expiraEm: pagamento.expiraEm
+        };
+
+    } catch (erro) {
+        console.error('Erro ao gerar PIX:', erro);
+        return null;
+    }
+}
+
+/**
+ * Verifica status do pagamento
+ */
+async function verificarPagamento(txid) {
+    try {
+        const response = await gerencianet.pixDetailCharge(txid);
+        
+        if (response.status === 'CONCLUIDA') {
+            // Atualiza status no banco
+            await marcarComoPago(txid);
+            return 'pago';
+        } else if (response.status === 'ATIVA') {
+            return 'pendente';
+        } else {
+            return 'expirado';
+        }
+    } catch (erro) {
+        console.error('Erro ao verificar pagamento:', erro);
+        return 'erro';
+    }
+}
+
+/**
+ * Salva pagamento no JSON (simples, depois pode migrar para SQLite)
+ */
+const pagamentosPath = './database/pagamentos.json';
+
+function salvarPagamento(pagamento) {
+    let pagamentos = [];
+    
+    if (fs.existsSync(pagamentosPath)) {
+        pagamentos = JSON.parse(fs.readFileSync(pagamentosPath));
+    }
+    
+    pagamentos.push(pagamento);
+    fs.writeFileSync(pagamentosPath, JSON.stringify(pagamentos, null, 2));
+}
+
+function marcarComoPago(txid) {
+    let pagamentos = [];
+    
+    if (fs.existsSync(pagamentosPath)) {
+        pagamentos = JSON.parse(fs.readFileSync(pagamentosPath));
+        
+        const index = pagamentos.findIndex(p => p.txid === txid);
+        if (index !== -1) {
+            pagamentos[index].status = 'pago';
+            pagamentos[index].pagoEm = new Date();
+            fs.writeFileSync(pagamentosPath, JSON.stringify(pagamentos, null, 2));
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+function buscarPagamento(txid) {
+    if (fs.existsSync(pagamentosPath)) {
+        const pagamentos = JSON.parse(fs.readFileSync(pagamentosPath));
+        return pagamentos.find(p => p.txid === txid);
+    }
+    return null;
+}
+
+module.exports = {
+    PLANOS,
+    gerarPagamentoPIX,
+    verificarPagamento,
+    buscarPagamento,
+    marcarComoPago
+};
