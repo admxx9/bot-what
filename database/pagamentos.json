@@ -1,1 +1,12 @@
-[]
+[
+  {
+    "txid": "60ff6a444c7641ce945c2bd3889a3b13",
+    "userId": "267473970569223@lid",
+    "plano": "7d",
+    "valor": 0.01,
+    "status": "pendente",
+    "criadoEm": "2026-03-29T19:12:21.224Z",
+    "expiraEm": "2026-03-29T20:12:21.224Z",
+    "copiaCola": "00020101021226830014BR.GOV.BCB.PIX2561qrcodespix.sejaefi.com.br/v2/603b3db3be884beab29844e857d999795204000053039865802BR5905EFISA6008SAOPAULO62070503***63044C05"
+  }
+]

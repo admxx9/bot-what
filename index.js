@@ -267,6 +267,33 @@ async function verificarPagamento(txid) {
   }
 }
 
+function iniciarMonitoramentoPagamento(txid, from, sock, planType, userId) {
+  const intervalo = 15 * 1000;
+  const maxTentativas = 240;
+  let tentativas = 0;
+
+  const timer = setInterval(async () => {
+    tentativas++;
+    if (tentativas > maxTentativas) {
+      clearInterval(timer);
+      return;
+    }
+
+    try {
+      const status = await verificarPagamento(txid);
+      if (status === 'pago') {
+        clearInterval(timer);
+        const plano = PLANOS[planType];
+        await sock.sendMessage(from, {
+          text: `✅ *PAGAMENTO CONFIRMADO!*\n\n🎉 Seu plano *${plano.nome}* foi ativado com sucesso!\n📅 Válido por *${plano.dias} dias*\n\nObrigado pela sua compra! 🙏`
+        });
+      }
+    } catch (e) {
+      // silencioso durante polling
+    }
+  }, intervalo);
+}
+
 // ========== FUNÇÕES DE JOGOS ==========
 function jogarDado() {
   return Math.floor(Math.random() * 6) + 1;
@@ -455,7 +482,7 @@ async function iniciarBot() {
         }
 
         case 'planos':
-          enviar(`💳 *PLANOS DISPONÍVEIS*\n\n💰 *7 Dias - Teste*: R$ 0,01\n💰 *15 Dias*: R$ 19,90\n💰 *30 Dias*: R$ 34,90\n\n*Como comprar:*\n${prefixoUsado}comprar 7d\n${prefixoUsado}confirmar [TXID após pagar]`);
+          enviar(`💳 *PLANOS DISPONÍVEIS*\n\n💰 *7 Dias - Teste:* R$ 0,01\n💰 *15 Dias:* R$ 19,90\n💰 *30 Dias:* R$ 34,90\n\n*Como comprar:*\n${prefixoUsado}comprar 7d\n${prefixoUsado}comprar 15d\n${prefixoUsado}comprar 30d\n\n✅ Após o pagamento a confirmação é automática!`);
           break;
 
         case 'comprar': {
@@ -477,25 +504,34 @@ async function iniciarBot() {
 
           const planoSelecionado = PLANOS[planType];
 
-          const pixMsg = `💳 *PAGAMENTO PIX*\n\n📋 *Plano:* ${planoSelecionado.nome}\n💰 *Valor:* R$ ${planoSelecionado.valor.toFixed(2)}\n🆔 *TXID:* \`${pagamento.txid}\`\n\n*🔑 Copia e Cola:*\n\`${pagamento.copiaCola}\`\n\n✅ Após pagar use:\n${prefixoUsado}confirmar ${pagamento.txid}`;
-
-          // FIX: imagemQrCode é base64 — precisa converter para Buffer
+          // 1. Envia QR Code como imagem (sem caption)
           if (pagamento.qrCodeBase64) {
             try {
               const base64Data = pagamento.qrCodeBase64.replace(/^data:image\/\w+;base64,/, '');
               const imageBuffer = Buffer.from(base64Data, 'base64');
-              await sock.sendMessage(from, {
-                image: imageBuffer,
-                caption: pixMsg
-              }, { quoted: info });
+              await sock.sendMessage(from, { image: imageBuffer }, { quoted: info });
             } catch (imgErr) {
-              // Se falhar o envio da imagem, manda só o texto
               console.error('Erro ao enviar imagem do QR:', imgErr.message);
-              await enviar(pixMsg);
             }
-          } else {
-            await enviar(pixMsg);
           }
+
+          // 2. Envia informações do plano
+          await enviar(
+            `💳 *PAGAMENTO PIX*\n\n` +
+            `📋 *Plano:* ${planoSelecionado.nome}\n` +
+            `💰 *Valor:* R$ ${planoSelecionado.valor.toFixed(2).replace('.', ',')}\n\n` +
+            `📲 Escaneie o QR code acima ou copie o código Pix abaixo.\n\n` +
+            `⏳ Após o pagamento a confirmação é automática!`
+          );
+
+          // 3. Envia Pix Copia e Cola isolado em monospace (evita link do WhatsApp)
+          await sock.sendMessage(from, {
+            text: '```' + pagamento.copiaCola + '```'
+          }, { quoted: info });
+
+          // 4. Inicia monitoramento automático de pagamento
+          iniciarMonitoramentoPagamento(pagamento.txid, from, sock, planType, sender);
+
           break;
         }
 
