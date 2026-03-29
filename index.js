@@ -424,44 +424,62 @@ async function iniciarBot() {
         await sock.sendPresenceUpdate('paused', from);
       };
 
-      const enviarBotoes = async (bodyText, footerText, botoes) => {
-        const mensagemInterativa = generateWAMessageFromContent(
+      const enviarBotoes = async (titulo, bodyText, footerText, secoes) => {
+        // secoes = [{ titulo: "Seção", rows: [{ label, id, desc }] }]
+        const mensagemLista = generateWAMessageFromContent(
           from,
           proto.Message.fromObject({
-            interactiveMessage: {
-              body: { text: bodyText },
-              footer: { text: footerText },
-              header: { hasMediaAttachment: false },
-              nativeFlowMessage: {
-                buttons: botoes.map(b => ({
-                  name: "quick_reply",
-                  buttonParamsJson: JSON.stringify({ display_text: b.label, id: b.id })
-                })),
-                messageParamsJson: ""
-              },
-              contextInfo: info.key ? {
-                stanzaId: info.key.id,
-                participant: sender,
-                quotedMessage: info.message
-              } : {}
+            listMessage: {
+              title: titulo,
+              description: bodyText,
+              footerText: footerText,
+              listType: proto.Message.ListMessage.ListType.SINGLE_SELECT,
+              buttonText: "🔽 Ver opções",
+              sections: secoes.map(s => ({
+                title: s.titulo,
+                rows: s.rows.map(r => ({
+                  title: r.label,
+                  description: r.desc || "",
+                  rowId: r.id
+                }))
+              }))
             }
           }),
           { userJid: sock.user.id }
         );
-        await sock.relayMessage(from, mensagemInterativa.message, { messageId: mensagemInterativa.key.id });
+        await sock.relayMessage(from, mensagemLista.message, { messageId: mensagemLista.key.id });
       };
 
       const enviarMenuLista = async () => {
         const planoStatus = isUsuarioAtivo(sender) ? "✅ Ativo" : "❌ Inativo";
         await enviarBotoes(
-          `🤖 *MEU BOT*\n\n👤 ${nome}\n💰 Coins: ${getCoins(sender)}\n📋 Plano: ${planoStatus}`,
-          "Selecione uma opção abaixo 👇",
+          "🤖 MEU BOT",
+          `👤 ${nome}\n💰 Coins: ${getCoins(sender)}\n📋 Plano: ${planoStatus}`,
+          "Selecione uma opção abaixo",
           [
-            { label: "👤 Meu Perfil",  id: ".perfil"  },
-            { label: "💳 Ver Planos",  id: ".planos"  },
-            { label: "🎮 Jogos",       id: ".jogos"   },
-            { label: "🏆 Ranking",     id: ".rank"    },
-            { label: "📅 Meu Plano",   id: ".meuplano"}
+            {
+              titulo: "🏠 Geral",
+              rows: [
+                { label: "👤 Meu Perfil",  id: ".perfil",   desc: "Ver seus dados"       },
+                { label: "🏆 Ranking",     id: ".rank",     desc: "Top 10 usuários"      },
+                { label: "👑 Criador",     id: ".dono",     desc: "Info do criador"      }
+              ]
+            },
+            {
+              titulo: "💳 Planos",
+              rows: [
+                { label: "📋 Ver Planos",    id: ".planos",    desc: "Preços e detalhes"        },
+                { label: "📅 Meu Plano",     id: ".meuplano",  desc: "Verificar plano ativo"    }
+              ]
+            },
+            {
+              titulo: "🎮 Jogos (requer plano)",
+              rows: [
+                { label: "🎲 Dado",      id: ".dado 10",     desc: "Aposte coins no dado"  },
+                { label: "🎰 Slot",      id: ".slot 10",     desc: "Caça-níqueis"          },
+                { label: "⚡ Duplicar",  id: ".duplicar 10", desc: "50/50 seus coins"      }
+              ]
+            }
           ]
         );
       };
@@ -536,12 +554,18 @@ async function iniciarBot() {
           await reagir('💳');
           await digitando(2000);
           await enviarBotoes(
-            `💳 *PLANOS DISPONÍVEIS*\n\n🟢 7 Dias — R$ 0,01 _(teste)_\n🔵 15 Dias — R$ 19,90\n🟣 30 Dias — R$ 34,90`,
+            "💳 Planos Disponíveis",
+            "Escolha o plano ideal para você:",
             "✅ Confirmação automática após pagamento",
             [
-              { label: "🟢 Comprar 7 dias — R$ 0,01",  id: ".comprar 7d"  },
-              { label: "🔵 Comprar 15 dias — R$ 19,90", id: ".comprar 15d" },
-              { label: "🟣 Comprar 30 dias — R$ 34,90", id: ".comprar 30d" }
+              {
+                titulo: "💰 Planos",
+                rows: [
+                  { label: "🟢 7 Dias — R$ 0,01",  id: ".comprar 7d",  desc: "Plano teste, acesso completo"   },
+                  { label: "🔵 15 Dias — R$ 19,90", id: ".comprar 15d", desc: "Acesso completo por 15 dias"   },
+                  { label: "🟣 30 Dias — R$ 34,90", id: ".comprar 30d", desc: "Acesso completo por 30 dias"   }
+                ]
+              }
             ]
           );
           break;
@@ -551,12 +575,18 @@ async function iniciarBot() {
           await reagir('🎮');
           await digitando(1500);
           await enviarBotoes(
-            `🎮 *JOGOS*\n\n_Todos os jogos exigem plano ativo._\n\nSeus coins: *${getCoins(sender)}*`,
-            "Escolha um jogo abaixo 🎲",
+            "🎮 Jogos",
+            `Seus coins: ${getCoins(sender)}\nTodos os jogos exigem plano ativo.`,
+            "Escolha um jogo abaixo",
             [
-              { label: "🎲 Dado (10 coins)",      id: ".dado 10"      },
-              { label: "🎰 Slot (10 coins)",       id: ".slot 10"      },
-              { label: "⚡ Duplicar (10 coins)",   id: ".duplicar 10"  }
+              {
+                titulo: "🎮 Jogos disponíveis",
+                rows: [
+                  { label: "🎲 Dado",     id: ".dado 10",     desc: "Aposte coins no dado (10 coins)"  },
+                  { label: "🎰 Slot",     id: ".slot 10",     desc: "Caça-níqueis (10 coins)"          },
+                  { label: "⚡ Duplicar", id: ".duplicar 10", desc: "50/50 seus coins (10 coins)"      }
+                ]
+              }
             ]
           );
           break;
