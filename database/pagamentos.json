@@ -8,5 +8,15 @@
     "criadoEm": "2026-03-29T19:12:21.224Z",
     "expiraEm": "2026-03-29T20:12:21.224Z",
     "copiaCola": "00020101021226830014BR.GOV.BCB.PIX2561qrcodespix.sejaefi.com.br/v2/603b3db3be884beab29844e857d999795204000053039865802BR5905EFISA6008SAOPAULO62070503***63044C05"
+  },
+  {
+    "txid": "453c84c744f548c682e4e3424a6b6e65",
+    "userId": "267473970569223@lid",
+    "plano": "7d",
+    "valor": 0.01,
+    "status": "pendente",
+    "criadoEm": "2026-03-29T19:19:26.479Z",
+    "expiraEm": "2026-03-29T20:19:26.479Z",
+    "copiaCola": "00020101021226830014BR.GOV.BCB.PIX2561qrcodespix.sejaefi.com.br/v2/8dc9e625ac914c629cf3327e4599f4b55204000053039865802BR5905EFISA6008SAOPAULO62070503***630479E8"
   }
 ]

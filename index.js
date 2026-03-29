@@ -35,6 +35,8 @@ console.log(chalk.cyan("━".repeat(40)));
 const prefixos = ['.', '!', '/', '#', '$'];
 let botAtivo = true;
 
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 // ⚠️ ALTERE AQUI: coloque seu número completo com DDI (sem + ou espaços)
 let dono = "5511999999999@s.whatsapp.net";
 
@@ -214,7 +216,7 @@ async function gerarPagamentoPIX(userId, userNome, planType) {
       status: 'pendente',
       criadoEm: new Date(),
       expiraEm: new Date(Date.now() + 3600000),
-      qrCodeBase64: qrData.imagemQrCode,
+      qrCodeBase64: qrData.imagemQrcode,
       copiaCola: qrData.qrcode
     };
 
@@ -224,7 +226,7 @@ async function gerarPagamentoPIX(userId, userNome, planType) {
 
     return {
       txid: cobranca.txid,
-      qrCodeBase64: qrData.imagemQrCode,
+      qrCodeBase64: qrData.imagemQrcode,
       copiaCola: qrData.qrcode,
       valor: plano.valor,
       expiraEm: pagamento.expiraEm
@@ -515,21 +517,26 @@ async function iniciarBot() {
             }
           }
 
-          // 2. Envia informações do plano
+          // 2. Envia informações do plano (com delay para evitar detecção)
+          await sleep(3000);
           await enviar(
             `💳 *PAGAMENTO PIX*\n\n` +
             `📋 *Plano:* ${planoSelecionado.nome}\n` +
             `💰 *Valor:* R$ ${planoSelecionado.valor.toFixed(2).replace('.', ',')}\n\n` +
-            `📲 Escaneie o QR code acima ou copie o código Pix abaixo.\n\n` +
-            `⏳ Após o pagamento a confirmação é automática!`
+            `📲 Escaneie o QR code acima ou copie o código Pix abaixo.`
           );
 
           // 3. Envia Pix Copia e Cola isolado em monospace (evita link do WhatsApp)
+          await sleep(3000);
           await sock.sendMessage(from, {
             text: '```' + pagamento.copiaCola + '```'
           }, { quoted: info });
 
-          // 4. Inicia monitoramento automático de pagamento
+          // 4. Mensagem final
+          await sleep(3000);
+          await enviar('⏳ Após o pagamento a confirmação é automática!');
+
+          // 5. Inicia monitoramento automático de pagamento
           iniciarMonitoramentoPagamento(pagamento.txid, from, sock, planType, sender);
 
           break;
