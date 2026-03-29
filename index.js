@@ -113,7 +113,9 @@ function adicionarUsuario(userId, nome, username) {
       criadoEm: new Date()
     });
     salvarJSON(usuariosPath, usuarios);
+    return true; // novo usuário
   }
+  return false;
 }
 
 function getCoins(userId) {
@@ -393,24 +395,83 @@ async function iniciarBot() {
       const ehGrupo = from.endsWith('@g.us');
       const sender  = ehGrupo ? info.key.participant : from;
       const nome    = info.pushName || "Usuário";
-      const conteudo = info.message.conversation ||
-                       info.message.extendedTextMessage?.text || "";
+      const conteudo = info.message?.conversation ||
+                       info.message?.extendedTextMessage?.text ||
+                       info.message?.listResponseMessage?.singleSelectReply?.selectedRowId ||
+                       info.message?.buttonsResponseMessage?.selectedButtonId || "";
 
       const args = conteudo.trim().split(/ +/).slice(1);
       const comando = conteudo.toLowerCase().split(" ")[0];
       const q = args.join(' ');
       const ehDono = sender === dono;
 
+      const enviar = (texto) => sock.sendMessage(from, { text: texto }, { quoted: info });
+      const reagir = (emoji) => sock.sendMessage(from, { react: { text: emoji, key: info.key } });
+      const digitando = async (ms = 2000) => {
+        await sock.sendPresenceUpdate('composing', from);
+        await sleep(ms);
+        await sock.sendPresenceUpdate('paused', from);
+      };
+
+      const enviarMenuLista = async () => {
+        const planoStatus = isUsuarioAtivo(sender) ? "✅ Ativo" : "❌ Inativo";
+        await sock.sendMessage(from, {
+          listMessage: {
+            title: '🤖 MEU BOT',
+            text: `👤 *${nome}*\n🎮 Coins: ${getCoins(sender)}\n📋 Plano: ${planoStatus}`,
+            footerText: 'Selecione uma opção abaixo',
+            buttonText: '📋 Ver opções',
+            listType: 1,
+            sections: [
+              {
+                title: '🏠 Geral',
+                rows: [
+                  { title: '👤 Perfil', description: 'Ver seus dados', rowId: '.perfil' },
+                  { title: '🏆 Ranking', description: 'Top 10 usuários', rowId: '.rank' },
+                  { title: '👑 Criador', description: 'Info do criador', rowId: '.dono' },
+                ]
+              },
+              {
+                title: '💳 Planos',
+                rows: [
+                  { title: '📋 Ver Planos', description: 'Preços e detalhes', rowId: '.planos' },
+                  { title: '🛒 Comprar 7 dias', description: 'R$ 0,01 – Teste', rowId: '.comprar 7d' },
+                  { title: '🛒 Comprar 15 dias', description: 'R$ 19,90', rowId: '.comprar 15d' },
+                  { title: '🛒 Comprar 30 dias', description: 'R$ 34,90', rowId: '.comprar 30d' },
+                  { title: '📅 Meu Plano', description: 'Verificar plano ativo', rowId: '.meuplano' },
+                ]
+              },
+              {
+                title: '🎮 Jogos (requer plano)',
+                rows: [
+                  { title: '🎲 Dado', description: 'Aposte coins no dado', rowId: '.dado 10' },
+                  { title: '🎰 Slot', description: 'Caça-níqueis', rowId: '.slot 10' },
+                  { title: '⚡ Duplicar', description: '50/50 seus coins', rowId: '.duplicar 10' },
+                ]
+              }
+            ]
+          }
+        }, { quoted: info });
+      };
+
       let prefixoUsado = null;
       for (const p of prefixos) {
         if (comando.startsWith(p)) { prefixoUsado = p; break; }
       }
+
+      // Primeira interação: novo usuário recebe boas-vindas + menu
+      const ehNovoUsuario = adicionarUsuario(sender, nome, info.pushName || nome);
+      if (ehNovoUsuario && !prefixoUsado) {
+        await digitando(2500);
+        await enviar(`👋 Olá, *${nome}*! Seja bem-vindo(a) ao *MEU BOT* 🤖\n\nAqui está o menu para você começar:`);
+        await sleep(2000);
+        await enviarMenuLista();
+        return;
+      }
+
       if (!prefixoUsado) return;
 
       const comandoLimpo = comando.slice(prefixoUsado.length);
-      adicionarUsuario(sender, nome, info.pushName || nome);
-
-      const enviar = (texto) => sock.sendMessage(from, { text: texto }, { quoted: info });
 
       // Comandos do dono
       if (comandoLimpo === 'ligar') {
@@ -453,41 +514,39 @@ async function iniciarBot() {
         case 'menu':
         case 'ajuda':
         case 'start': {
-          const planoStatus = temPlanoAtivo ? "✅ ATIVO" : "❌ INATIVO";
-          enviar(`╔════━━━━━ ❖ ━━━━━═══╗
-         🤖 *MEU BOT* 🤖
-╠════━━━━━ ❖ ━━━━━═══╣
-┃
-┃ 🏠 *GERAL*
-┃ • menu - Mostrar menu
-┃ • perfil - Ver seus dados
-┃ • rank - Ranking de usuários
-┃
-┃ 💳 *PLANOS*
-┃ • planos - Ver planos
-┃ • comprar [7d/15d/30d]
-┃ • confirmar [TXID]
-┃ • meuplano - Ver seu plano
-┃
-┃ 🎮 *JOGOS* (precisa de plano)
-┃ • dado [valor] - Jogue o dado
-┃ • slot [valor] - Caça-níqueis
-┃ • duplicar [valor] - 50/50
-┃
-╠════━━━━━ ❖ ━━━━━═══╣
-┃ 💰 *SEU STATUS*
-┃ 👤 ${nome}
-┃ 🎮 Coins: ${getCoins(sender)}
-┃ 📋 Plano: ${planoStatus}
-╚════━━━━━ ❖ ━━━━━═══╝`);
+          await reagir('🤖');
+          await digitando(2000);
+          await enviarMenuLista();
           break;
         }
 
-        case 'planos':
-          enviar(`💳 *PLANOS DISPONÍVEIS*\n\n💰 *7 Dias - Teste:* R$ 0,01\n💰 *15 Dias:* R$ 19,90\n💰 *30 Dias:* R$ 34,90\n\n*Como comprar:*\n${prefixoUsado}comprar 7d\n${prefixoUsado}comprar 15d\n${prefixoUsado}comprar 30d\n\n✅ Após o pagamento a confirmação é automática!`);
+        case 'planos': {
+          await reagir('💳');
+          await digitando(2000);
+          await sock.sendMessage(from, {
+            listMessage: {
+              title: '💳 Planos Disponíveis',
+              text: '📋 Escolha o plano ideal para você:',
+              footerText: '✅ Confirmação automática após pagamento',
+              buttonText: '🛒 Ver planos',
+              listType: 1,
+              sections: [
+                {
+                  title: '💰 Planos',
+                  rows: [
+                    { title: '🟢 7 Dias – R$ 0,01', description: 'Plano teste, acesso completo', rowId: '.comprar 7d' },
+                    { title: '🔵 15 Dias – R$ 19,90', description: 'Acesso completo por 15 dias', rowId: '.comprar 15d' },
+                    { title: '🟣 30 Dias – R$ 34,90', description: 'Acesso completo por 30 dias', rowId: '.comprar 30d' },
+                  ]
+                }
+              ]
+            }
+          }, { quoted: info });
           break;
+        }
 
         case 'comprar': {
+          await reagir('💸');
           if (!efipayReady) {
             return enviar("⚠️ Sistema de pagamento temporariamente indisponível.\nEntre em contato com o dono.");
           }
@@ -560,6 +619,8 @@ async function iniciarBot() {
         }
 
         case 'meuplano': {
+          await reagir('📋');
+          await digitando(1500);
           if (!temPlanoAtivo) return enviar(`⚠️ Você não tem um plano ativo!\nUse ${prefixoUsado}planos para comprar.`);
           const planoAtivo = getPlanoUsuario(sender);
           if (planoAtivo) {
@@ -570,11 +631,16 @@ async function iniciarBot() {
           break;
         }
 
-        case 'perfil':
+        case 'perfil': {
+          await reagir('👤');
+          await digitando(1500);
           enviar(`📱 *PERFIL*\n👤 Nome: ${nome}\n💰 Coins: ${getCoins(sender)}\n📋 Plano: ${temPlanoAtivo ? "✅ Ativo" : "❌ Inativo"}`);
           break;
+        }
 
         case 'rank': {
+          await reagir('🏆');
+          await digitando(1500);
           const usuarios = lerJSON(usuariosPath);
           usuarios.sort((a, b) => (b.coins || 0) - (a.coins || 0));
           let rankMsg = `🏆 *RANKING TOP 10* 🏆\n\n`;
@@ -591,6 +657,9 @@ async function iniciarBot() {
           if (isNaN(apostaDado) || apostaDado <= 0) return enviar(`🎲 Use: ${prefixoUsado}dado [valor]\nEx: ${prefixoUsado}dado 10`);
           if (getCoins(sender) < apostaDado) return enviar(`❌ Você tem apenas ${getCoins(sender)} coins.`);
 
+          await reagir('🎲');
+          await digitando(2000);
+
           const num = jogarDado();
           const ganhouDado = num === 6;
           const premioDado = ganhouDado ? apostaDado * 5 : 0;
@@ -598,6 +667,7 @@ async function iniciarBot() {
           if (ganhouDado) adicionarCoins(sender, premioDado);
           else removerCoins(sender, apostaDado);
 
+          await reagir(ganhouDado ? '🎉' : '😢');
           enviar(`🎲 *DADO*\nVocê tirou: *${num}*\nAposta: ${apostaDado} coins\n${ganhouDado ? `🎉 GANHOU +${premioDado} coins!` : '😢 PERDEU!'}\n💰 Saldo: ${getCoins(sender)} coins`);
           break;
         }
@@ -607,12 +677,16 @@ async function iniciarBot() {
           if (isNaN(apostaSlot) || apostaSlot <= 0) return enviar(`🎰 Use: ${prefixoUsado}slot [valor]`);
           if (getCoins(sender) < apostaSlot) return enviar(`❌ Você tem apenas ${getCoins(sender)} coins.`);
 
+          await reagir('🎰');
+          await digitando(2000);
+
           const resultado = jogarSlot();
           const ganho = calcularGanhoSlot(resultado, apostaSlot);
 
           if (ganho > 0) adicionarCoins(sender, ganho);
           else removerCoins(sender, apostaSlot);
 
+          await reagir(ganho > 0 ? '🎉' : '😢');
           enviar(`🎰 *CAÇA-NÍQUEIS*\n[ ${resultado[0]} ] [ ${resultado[1]} ] [ ${resultado[2]} ]\nAposta: ${apostaSlot} coins\n${ganho > 0 ? `🎉 GANHOU +${ganho} coins! (${ganho / apostaSlot}x)` : '😢 PERDEU!'}\n💰 Saldo: ${getCoins(sender)} coins`);
           break;
         }
@@ -622,21 +696,29 @@ async function iniciarBot() {
           if (isNaN(apostaDup) || apostaDup <= 0) return enviar(`⚡ Use: ${prefixoUsado}duplicar [valor]`);
           if (getCoins(sender) < apostaDup) return enviar(`❌ Você tem apenas ${getCoins(sender)} coins.`);
 
+          await reagir('⚡');
+          await digitando(2000);
+
           const ganhouDup = Math.random() < 0.5;
           if (ganhouDup) {
             adicionarCoins(sender, apostaDup);
+            await reagir('🎉');
             enviar(`🎉 DUPLICOU! +${apostaDup} coins!\n💰 Saldo: ${getCoins(sender)} coins`);
           } else {
             removerCoins(sender, apostaDup);
+            await reagir('💀');
             enviar(`💀 PERDEU! -${apostaDup} coins\n💰 Saldo: ${getCoins(sender)} coins`);
           }
           break;
         }
 
         case 'dono':
-        case 'criador':
+        case 'criador': {
+          await reagir('👑');
+          await digitando(1500);
           enviar(`👑 *CRIADO POR:*\n📱 wa.me/${dono.split('@')[0]}\n💳 Pagamentos via Efí Bank PIX`);
           break;
+        }
 
         default:
           if (comandoLimpo) {
