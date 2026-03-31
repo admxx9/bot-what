@@ -1,1 +1,11 @@
-[]
+[
+  {
+    "id": "120363405603025399@g.us",
+    "dono": "267473970569223@lid",
+    "nomeGrupo": "teste3",
+    "status": "inativo",
+    "aguardandoAdmin": true,
+    "adminRecebido": false,
+    "adicionadoEm": "2026-03-31T21:31:28.229Z"
+  }
+]

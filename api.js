@@ -20,7 +20,7 @@ const EFI_CLIENT_SECRET = process.env.EFI_CLIENT_SECRET || 'Client_Secret_345bde
 const EFI_SANDBOX       = false;
 const EFI_PIX_KEY       = process.env.EFI_PIX_KEY       || 'a45331e2-840e-41dc-bc93-8f1bd2b6fd91';
 const EFI_CERT_PATH     = './certificado.p12';
-const BRL_POR_MOEDA     = 0.10;
+const BRL_POR_MOEDA     = 0.01; // TESTE: 1 BRL = 100 moedas, R$ 0,01 = 1 moeda
 
 try {
   efipay = new EfiBankPix({
@@ -43,9 +43,9 @@ const salvar = (p, d) => fs.writeFileSync(p, JSON.stringify(d, null, 2));
 
 // ========== PLANOS ==========
 const PLANOS = {
-  basico:  { id: 'basico',  nome: '⭐ Básico',   moedas: 150, dias: 30, maxGrupos: 1  },
-  pro:     { id: 'pro',     nome: '💎 Pro',       moedas: 350, dias: 30, maxGrupos: 5  },
-  premium: { id: 'premium', nome: '👑 Premium',   moedas: 600, dias: 30, maxGrupos: -1 }
+  basico:  { id: 'basico',  nome: '⭐ Básico',   moedas: 1, dias: 30, maxGrupos: 1  },
+  pro:     { id: 'pro',     nome: '💎 Pro',       moedas: 1, dias: 30, maxGrupos: 5  },
+  premium: { id: 'premium', nome: '👑 Premium',   moedas: 1, dias: 30, maxGrupos: -1 }
 };
 
 // ========== HELPERS ==========
