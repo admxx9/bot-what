@@ -17,6 +17,14 @@ author = "agent"
 task = "workflow.run"
 args = "Start application"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start API"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start Web"
+
 [[workflows.workflow]]
 name = "Start application"
 author = "agent"
@@ -27,3 +35,35 @@ outputType = "console"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "node index.js"
+
+[[workflows.workflow]]
+name = "Start API"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "node api.js"
+waitForPort = 3001
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow]]
+name = "Start Web"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd web && npm run dev"
+waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[ports]]
+localPort = 3001
+externalPort = 3001
+
+[[ports]]
+localPort = 5000
+externalPort = 80

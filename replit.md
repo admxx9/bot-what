@@ -1,41 +1,109 @@
-# NaufraBot V3
+# BotAluguel — Sistema de Aluguel de Bot WhatsApp
 
-A WhatsApp bot built with Node.js and the Baileys library. It includes RPG games, download features, AI integrations, group protection (anti-link, anti-spam), and payment integration via Efí Bank PIX.
+Sistema completo de aluguel de bot WhatsApp com painel web integrado, pagamentos automáticos via PIX (Efí Bank) e gerenciamento de grupos.
 
-## Project Structure
+## Arquitetura
 
-- `index.js` — Main bot entry point; handles WhatsApp connection and message routing
-- `efipay.js` — Efí Bank PIX payment integration (REST API)
-- `paymentHandler.js` — Payment handling logic
-- `userSystem.js` — User management system
-- `database/` — JSON-based data storage (users, payments, active plans)
-- `sessao/` & `session/` — WhatsApp session/auth state files (Baileys)
-- `settings/` — Bot configuration and per-user/group settings
-- `fuction/` — Command handlers (downloads, stickers, etc.)
-- `Games/` — RPG game logic
-- `certificado.pem` / `certificado.p12` — TLS certificates for Efí Bank API
+### Bot WhatsApp (`index.js`)
+- Construído com Baileys (WhiskeySockets)
+- Sistema de moedas e planos (Básico / Pro / Premium)
+- Gerenciamento de grupos por usuário
+- Menus interativos em camadas (WhatsApp list messages)
+- Fluxo de entrada em grupo via `.link`
+- Detecção automática de cargo admin
+- Sistema de ativação por privado (`.ativar`)
+- Notificações de expiração (48h e 24h)
 
-## Setup
+### API REST (`api.js`)
+- Express.js na porta 3001
+- Autenticação por número de telefone (header `x-user-phone`)
+- Endpoints para usuário, grupos, planos, PIX
+- Compartilha a mesma base de dados JSON do bot
 
-- Runtime: Node.js 20
-- Package manager: npm
-- Dependencies installed via `npm install`
+### Painel Web (`web/`)
+- React 19 + TypeScript + Vite
+- Tailwind CSS v4 + shadcn/ui (componentes customizados)
+- TanStack Query v5 para gerenciamento de estado assíncrono
+- React Router v6 para navegação
+- Framer Motion para animações
+- Dark mode por padrão, mobile-first
 
-## Running
+## Estrutura de Arquivos
 
-The bot runs as a console workflow:
 ```
-node index.js
+index.js            — Bot WhatsApp (Baileys)
+api.js              — API REST (Express, porta 3001)
+efipay.js           — Integração Efí Bank PIX (NÃO MODIFICAR)
+buttons.js          — Helpers de mensagens interativas Baileys
+database/
+  usuarios.json     — Usuários e saldo de moedas
+  grupos.json       — Grupos vinculados por usuário
+  planos_ativos.json— Planos ativos por usuário
+  pagamentos.json   — Histórico de pagamentos PIX
+sessao/             — Sessão WhatsApp (Baileys multi-file)
+certificado.p12     — Certificado mTLS Efí Bank (PRODUÇÃO)
+web/
+  src/
+    pages/          — Dashboard, Login, Grupos, Planos, Recarregar
+    components/     — Layout, ui/Button, ui/Card, ui/Badge, ui/Input
+    lib/            — api.ts, utils.ts
+    hooks/          — useAuth.ts
 ```
 
-On first run (or when session is expired), it will prompt for a QR code or pairing code to authenticate with WhatsApp.
+## Planos Disponíveis
 
-## Configuration
+| Plano   | Moedas | Duração | Grupos      |
+|---------|--------|---------|-------------|
+| Básico  | 150    | 30 dias | 1           |
+| Pro     | 350    | 30 dias | 5           |
+| Premium | 600    | 30 dias | Ilimitados  |
 
-Edit the top of `index.js` to set:
-- `dono` — Bot owner WhatsApp number
-- `EFI_CLIENT_ID` / `EFI_CLIENT_SECRET` — Efí Bank credentials
-- `EFI_SANDBOX` — Set to `false` for production
-- `EFI_PIX_KEY` — Your PIX key
+**Taxa de conversão:** 1 BRL = 10 moedas (mínimo R$ 5,00)
 
-Environment variables are also stored in `.env`.
+## Configuração
+
+### Variáveis de Ambiente (`.env`)
+```
+EFI_CLIENT_ID=...        — Client ID Efí Bank
+EFI_CLIENT_SECRET=...    — Client Secret Efí Bank
+EFI_PIX_KEY=...          — Chave PIX (email, CPF, celular)
+DONO=5511999999999       — Número do dono do bot (sem @s.whatsapp.net)
+```
+
+### Configurar dono do bot
+Edite a variável `DONO` no `.env` ou diretamente no `index.js`.
+
+## Workflows
+
+- **Start application** — Inicia o bot WhatsApp (`node index.js`)
+- **Start API** — Inicia a API REST (`node api.js`, porta 3001)
+- **Start Web** — Inicia o painel web (`cd web && npm run dev`, porta 5000)
+
+## Comandos do Bot (WhatsApp)
+
+### Privado
+- `.menu` — Menu principal em camadas
+- `.painel` — Ver saldo, plano e grupos
+- `.recarregar [valor]` — Comprar moedas via PIX
+- `.planos` — Ver planos disponíveis
+- `.comprar [basico|pro|premium]` — Comprar plano com moedas
+- `.link` — Adicionar bot a um grupo
+- `.ativar [groupId]` — Ativar bot em grupo após receber admin
+- `.grupos` — Listar meus grupos
+- `.ajuda` — Guia de uso
+
+### Grupo (após ativação)
+- `.menu` — Menu do grupo
+- `.status` — Status e tempo restante do plano
+- `.info` — Informações do grupo
+
+### Dono
+- `.darmoedas [número] [qtd]` — Dar moedas a um usuário
+- `.usuarios` — Total de usuários
+- `.grupos_total` — Total de grupos
+
+## Integração Efí Bank PIX
+O arquivo `efipay.js` é a integração com a API PIX da Efí Bank e **não deve ser modificado**. Requer:
+- Certificado `.p12` na raiz do projeto
+- Credenciais válidas no `.env`
+- Modo produção ativo (`EFI_SANDBOX = false`)

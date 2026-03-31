@@ -1,0 +1,161 @@
+Vamos reformular completamente a estética e a proposta do bot.
+Importante: manter obrigatoriamente o sistema de pagamento automático via PIX da Efi Bank (não remover ou alterar essa parte).
+
+O bot não será mais um cassino. Agora será um sistema de aluguel de bot por moedas.
+
+💰 SISTEMA DE ALUGUEL
+Usuários poderão alugar o bot utilizando moedas.
+
+Cada usuário terá saldo de moedas.
+
+O sistema de planos deve definir:
+
+duração do aluguel
+
+quantidade de grupos permitidos
+
+O bot deve salvar dados em arquivos .json, incluindo:
+
+ID do grupo
+
+ID do usuário pagante
+
+plano ativo
+
+status (ativo/inativo)
+
+tempo restante
+
+Quando o plano estiver próximo de expirar:
+
+notificar automaticamente o usuário pagante no privado
+
+🔗 SISTEMA DE ENTRADA NO GRUPO
+Comando: .link ou botão “Adicionar Bot”
+
+Fluxo:
+
+Bot pergunta o link do grupo
+
+Usuário envia o link
+
+Bot entra no grupo
+
+Bot envia mensagem informando que está aguardando admin
+
+O bot deve:
+
+detectar automaticamente quando receber cargo de administrador
+
+após receber admin → liberar menu
+
+🔒 SISTEMA DE ATIVAÇÃO
+Ao entrar no grupo:
+
+TODOS os comandos ficam bloqueados inicialmente
+
+Para ativar:
+
+usuário pagante deve enviar comando no privado
+
+somente após ativação o bot funciona no grupo
+
+📋 MENU (IMPORTANTE)
+NÃO usar menu simples de botões direto
+
+Estrutura desejada:
+
+botão principal
+
+ao clicar → abrir lista de opções (menu em camadas)
+
+👤 SISTEMA DE USUÁRIO
+Criar comando/painel onde o usuário pode:
+
+ver saldo de moedas
+
+ver planos ativos
+
+ver grupos vinculados
+
+⚠️ IMPORTANTE:
+
+Ao listar grupos:
+
+mostrar APENAS grupos do usuário logado/pagante
+
+NÃO mostrar todos os grupos do bot
+
+exibir status (ativo/inativo)
+
+🌐 SITE (PAINEL WEB)
+Criar um site integrado com API do bot.
+
+O site deve permitir:
+
+login do usuário
+
+visualizar saldo
+
+ver grupos ativos
+
+ver status dos planos
+
+gerenciar bot
+
+🎨 FRONT-END (OBRIGATÓRIO)
+Crie o front-end com:
+
+React 19 + TypeScript + Vite
+
+Tailwind CSS
+
+shadcn/ui
+
+TanStack Query
+
+Requisitos:
+
+design moderno, clean e minimalista
+
+foco em UI/UX
+
+totalmente responsivo (mobile-first)
+
+navegação intuitiva
+
+tipografia moderna e boa hierarquia visual
+
+animações suaves e transições elegantes
+
+feedback visual em interações
+
+dark mode
+
+Arquitetura:
+
+estrutura feature-based
+
+componentes reutilizáveis
+
+separação de páginas, hooks e serviços
+
+Performance:
+
+lazy loading
+
+code splitting
+
+⚙️ BACK-END / LÓGICA
+manter integração com Efi Bank (PIX automático)
+
+criar API para comunicação com o front-end
+
+garantir segurança e separação de dados por usuário
+
+📦 EXTRA
+usar boas práticas modernas (2026)
+
+código limpo e bem organizado
+
+incluir instruções de execução
