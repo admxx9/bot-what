@@ -6,7 +6,8 @@
     "coins": 70,
     "nivel": 1,
     "xp": 0,
-    "criadoEm": "2026-03-29T15:46:56.845Z"
+    "criadoEm": "2026-03-29T15:46:56.845Z",
+    "moedas": 0
   },
   {
     "id": "89752418164814@lid",
@@ -130,5 +131,11 @@
     "nome": "Usuário",
     "moedas": 30,
     "criadoEm": "2026-03-31T21:29:21.052Z"
+  },
+  {
+    "id": "5562993735175@s.whatsapp.net",
+    "nome": "Usuário",
+    "moedas": 30,
+    "criadoEm": "2026-03-31T22:04:40.423Z"
   }
 ]

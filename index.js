@@ -9,12 +9,13 @@ const {
   generateWAMessageFromContent,
   proto
 } = require("baileys");
-const fs        = require('fs');
-const { Boom }  = require('@hapi/boom');
-const NodeCache  = require("node-cache");
-const readline   = require("readline");
-const pino       = require('pino');
-const chalk      = require('chalk');
+const fs       = require('fs');
+const crypto   = require('crypto');
+const { Boom } = require('@hapi/boom');
+const NodeCache = require("node-cache");
+const readline  = require("readline");
+const pino      = require('pino');
+const chalk     = require('chalk');
 const { v4: uuidv4 } = require('uuid');
 const { sendButtons } = require('./buttons');
 const EfiBankPix = require('./efipay');
@@ -24,9 +25,9 @@ console.log(chalk.cyanBright("🤖 BOTALUGUEL — Sistema de Aluguel via WhatsAp
 console.log(chalk.cyan("═".repeat(50)));
 
 // ========== CONFIG ==========
-const prefixos  = ['.', '!', '/', '#'];
-const sleep     = ms => new Promise(r => setTimeout(r, ms));
-let botAtivo    = true;
+const prefixos = ['.', '!', '/', '#'];
+const sleep    = ms => new Promise(r => setTimeout(r, ms));
+let botAtivo   = true;
 
 let dono = process.env.DONO || "5511999999999";
 dono = dono.replace(/\D/g, '') + "@s.whatsapp.net";
@@ -50,17 +51,17 @@ if (EFI_CLIENT_ID !== 'SEU_CLIENT_ID_AQUI') {
   } catch (err) { console.log(chalk.red("❌ Efí Bank:"), err.message); }
 }
 
-// ========== PLANOS (valores de teste: 1 moeda cada) ==========
+// ========== PLANOS (valores de teste: 1 moeda) ==========
 const PLANOS = {
-  basico:  { id: 'basico',  nome: '⭐ Básico',  moedas: 1,   dias: 30, maxGrupos: 1  },
-  pro:     { id: 'pro',     nome: '💎 Pro',      moedas: 1,   dias: 30, maxGrupos: 5  },
-  premium: { id: 'premium', nome: '👑 Premium',  moedas: 1,   dias: 30, maxGrupos: -1 }
+  basico:  { id: 'basico',  nome: '⭐ Básico',  moedas: 1, dias: 30, maxGrupos: 1  },
+  pro:     { id: 'pro',     nome: '💎 Pro',      moedas: 1, dias: 30, maxGrupos: 5  },
+  premium: { id: 'premium', nome: '👑 Premium',  moedas: 1, dias: 30, maxGrupos: -1 }
 };
-// 1 BRL = 100 moedas — R$ 0,01 = 1 moeda (modo teste)
+// 1 BRL = 100 moedas — R$ 0,01 = 1 moeda
 const BRL_POR_MOEDA = 0.01;
 
 // ========== DATABASE ==========
-const DB = './database';
+const DB    = './database';
 const PATHS = {
   usuarios:     `${DB}/usuarios.json`,
   grupos:       `${DB}/grupos.json`,
@@ -75,54 +76,76 @@ function initDB() {
   }
 }
 
-const ler    = p => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return []; } };
-const salvar = (p, d) => fs.writeFileSync(p, JSON.stringify(d, null, 2));
+const lerDB    = p => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return []; } };
+const salvarDB = (p, d) => fs.writeFileSync(p, JSON.stringify(d, null, 2));
+const hashSenha = s => crypto.createHash('sha256').update(String(s)).digest('hex');
 
 // ========== USUÁRIOS ==========
-function getUser(userId) { return ler(PATHS.usuarios).find(u => u.id === userId) || null; }
+function getUser(userId) { return lerDB(PATHS.usuarios).find(u => u.id === userId) || null; }
+
 function createUser(userId, nome) {
-  const users = ler(PATHS.usuarios);
+  const users = lerDB(PATHS.usuarios);
   if (users.find(u => u.id === userId)) return false;
-  users.push({ id: userId, nome, moedas: 30, criadoEm: new Date().toISOString() });
-  salvar(PATHS.usuarios, users);
+  users.push({ id: userId, nome, moedas: 30, senha: null, criadoEm: new Date().toISOString() });
+  salvarDB(PATHS.usuarios, users);
   return true;
 }
+
 function getMoedas(userId) { const u = getUser(userId); return u ? (u.moedas ?? 0) : 0; }
+
 function addMoedas(userId, qtd) {
-  const users = ler(PATHS.usuarios);
+  const users = lerDB(PATHS.usuarios);
   const i = users.findIndex(u => u.id === userId);
   if (i === -1) return 0;
   users[i].moedas = (users[i].moedas ?? 0) + qtd;
-  salvar(PATHS.usuarios, users);
+  salvarDB(PATHS.usuarios, users);
   return users[i].moedas;
 }
+
 function remMoedas(userId, qtd) {
-  const users = ler(PATHS.usuarios);
+  const users = lerDB(PATHS.usuarios);
   const i = users.findIndex(u => u.id === userId);
   if (i === -1 || (users[i].moedas ?? 0) < qtd) return false;
   users[i].moedas -= qtd;
-  salvar(PATHS.usuarios, users);
+  salvarDB(PATHS.usuarios, users);
   return true;
+}
+
+function setSenha(userId, senha) {
+  const users = lerDB(PATHS.usuarios);
+  const i = users.findIndex(u => u.id === userId);
+  if (i === -1) return false;
+  users[i].senha = hashSenha(senha);
+  salvarDB(PATHS.usuarios, users);
+  return true;
+}
+
+function validarSenha(userId, senha) {
+  const u = getUser(userId);
+  if (!u) return false;
+  if (!u.senha) return true; // sem senha: acesso livre (backward compat)
+  return u.senha === hashSenha(senha);
 }
 
 // ========== PLANOS ATIVOS ==========
 function getPlanoAtivo(userId) {
-  const planos = ler(PATHS.planosAtivos);
+  const planos = lerDB(PATHS.planosAtivos);
   const p = planos.find(p => p.userId === userId && p.status === 'ativo');
   if (!p) return null;
   if (new Date(p.expiraEm) <= new Date()) {
-    const arr = ler(PATHS.planosAtivos);
+    const arr = lerDB(PATHS.planosAtivos);
     const idx = arr.findIndex(x => x.userId === userId && x.status === 'ativo');
-    if (idx !== -1) { arr[idx].status = 'expirado'; salvar(PATHS.planosAtivos, arr); }
+    if (idx !== -1) { arr[idx].status = 'expirado'; salvarDB(PATHS.planosAtivos, arr); }
     return null;
   }
   return p;
 }
+
 function ativarPlano(userId, planKey) {
   const plano = PLANOS[planKey];
   if (!plano) return false;
   if (!remMoedas(userId, plano.moedas)) return false;
-  const arr = ler(PATHS.planosAtivos);
+  const arr = lerDB(PATHS.planosAtivos);
   arr.forEach(p => { if (p.userId === userId && p.status === 'ativo') p.status = 'expirado'; });
   const expiraEm = new Date();
   expiraEm.setDate(expiraEm.getDate() + plano.dias);
@@ -132,35 +155,38 @@ function ativarPlano(userId, planKey) {
     ativadoEm: new Date().toISOString(), expiraEm: expiraEm.toISOString(),
     notificado48h: false, notificado24h: false
   });
-  salvar(PATHS.planosAtivos, arr);
+  salvarDB(PATHS.planosAtivos, arr);
   return true;
 }
 
 // ========== GRUPOS ==========
-function getGrupo(groupId) { return ler(PATHS.grupos).find(g => g.id === groupId) || null; }
-function getGruposDoUsuario(userId) { return ler(PATHS.grupos).filter(g => g.dono === userId); }
+function getGrupo(groupId) { return lerDB(PATHS.grupos).find(g => g.id === groupId) || null; }
+function getGruposDoUsuario(userId) { return lerDB(PATHS.grupos).filter(g => g.dono === userId); }
+
 function addGrupo(groupId, userId, nomeGrupo) {
-  const grupos = ler(PATHS.grupos);
+  const grupos = lerDB(PATHS.grupos);
   if (grupos.find(g => g.id === groupId)) return;
   grupos.push({
     id: groupId, dono: userId, nomeGrupo: nomeGrupo || groupId,
     status: 'inativo', aguardandoAdmin: true, adminRecebido: false,
     adicionadoEm: new Date().toISOString()
   });
-  salvar(PATHS.grupos, grupos);
+  salvarDB(PATHS.grupos, grupos);
 }
+
 function updateGrupo(groupId, campos) {
-  const grupos = ler(PATHS.grupos);
+  const grupos = lerDB(PATHS.grupos);
   const i = grupos.findIndex(g => g.id === groupId);
   if (i === -1) return;
   Object.assign(grupos[i], campos);
-  salvar(PATHS.grupos, grupos);
-}
-function countGruposAtivos(userId) {
-  return ler(PATHS.grupos).filter(g => g.dono === userId && g.status === 'ativo').length;
+  salvarDB(PATHS.grupos, grupos);
 }
 
-// ========== PIX — RECARGA DE MOEDAS ==========
+function countGruposAtivos(userId) {
+  return lerDB(PATHS.grupos).filter(g => g.dono === userId && g.status === 'ativo').length;
+}
+
+// ========== PIX — RECARGA ==========
 async function gerarRecargaPix(userId, valorBRL) {
   if (!efipayReady) return { error: "PIX não configurado." };
   const moedas = Math.floor(valorBRL / BRL_POR_MOEDA);
@@ -179,7 +205,7 @@ async function gerarRecargaPix(userId, valorBRL) {
       expiraEm: new Date(Date.now() + 3600000).toISOString(),
       qrCodeBase64: qr.imagemQrcode, copiaCola: qr.qrcode
     };
-    const pags = ler(PATHS.pagamentos); pags.push(pag); salvar(PATHS.pagamentos, pags);
+    const pags = lerDB(PATHS.pagamentos); pags.push(pag); salvarDB(PATHS.pagamentos, pags);
     return pag;
   } catch (err) { return { error: err.message }; }
 }
@@ -189,11 +215,11 @@ async function verificarRecargaPix(txid) {
   try {
     const res = await efipay.pixDetailCharge(txid);
     if (res.status === 'CONCLUIDA') {
-      const pags = ler(PATHS.pagamentos);
+      const pags = lerDB(PATHS.pagamentos);
       const i = pags.findIndex(p => p.txid === txid);
       if (i !== -1 && pags[i].status !== 'pago') {
         pags[i].status = 'pago'; pags[i].pagoEm = new Date().toISOString();
-        salvar(PATHS.pagamentos, pags);
+        salvarDB(PATHS.pagamentos, pags);
         addMoedas(pags[i].userId, pags[i].moedas);
         return { status: 'pago', moedas: pags[i].moedas, userId: pags[i].userId };
       }
@@ -211,7 +237,7 @@ function monitorarPix(txid, from, sock) {
       if (r.status === 'pago') {
         clearInterval(iv);
         await sock.sendMessage(from, {
-          text: `✅ *PAGAMENTO CONFIRMADO!*\n\n💰 *+${r.moedas} moedas* adicionadas!\n🪙 Novo saldo: *${getMoedas(r.userId)} moedas*\n\nUse *.planos* para comprar um plano de aluguel.`
+          text: `✅ *PAGAMENTO CONFIRMADO!*\n\n💰 *+${r.moedas} moedas* adicionadas!\n🪙 Novo saldo: *${getMoedas(r.userId)} moedas*\n\nUse *.planos* para comprar um plano.`
         });
       }
     } catch {}
@@ -220,34 +246,34 @@ function monitorarPix(txid, from, sock) {
 
 // ========== NOTIFICAÇÕES DE EXPIRAÇÃO ==========
 async function verificarExpiracoes(sock) {
-  const planos = ler(PATHS.planosAtivos).filter(p => p.status === 'ativo');
-  const agora = Date.now();
+  const planos = lerDB(PATHS.planosAtivos).filter(p => p.status === 'ativo');
+  const agora  = Date.now();
   for (const p of planos) {
     const restante = new Date(p.expiraEm).getTime() - agora;
-    const h48 = 48 * 60 * 60 * 1000;
-    const h24 = 24 * 60 * 60 * 1000;
+    const h48 = 48 * 3600000;
+    const h24 = 24 * 3600000;
     if (!p.notificado48h && restante > 0 && restante <= h48) {
       await sock.sendMessage(p.userId, {
-        text: `⚠️ *AVISO — Plano expirando!*\n\nSeu plano *${p.nomePlano}* expira em *menos de 48 horas*.\n\nRenove com *.planos* para continuar usando o bot nos seus grupos. 🤖`
+        text: `⚠️ *AVISO — Plano expirando!*\n\nSeu plano *${p.nomePlano}* expira em *menos de 48 horas*.\n\nRenove com *.planos* para continuar. 🤖`
       });
-      const arr = ler(PATHS.planosAtivos);
+      const arr = lerDB(PATHS.planosAtivos);
       const idx = arr.findIndex(x => x.id === p.id);
-      if (idx !== -1) { arr[idx].notificado48h = true; salvar(PATHS.planosAtivos, arr); }
+      if (idx !== -1) { arr[idx].notificado48h = true; salvarDB(PATHS.planosAtivos, arr); }
     }
     if (!p.notificado24h && restante > 0 && restante <= h24) {
       await sock.sendMessage(p.userId, {
-        text: `🚨 *URGENTE — Plano expira em 24h!*\n\nSeu plano *${p.nomePlano}* expira em menos de 24 horas!\n\nRenove agora com *.planos* antes que seus grupos sejam desativados. ⏰`
+        text: `🚨 *URGENTE — Plano expira em 24h!*\n\nSeu plano *${p.nomePlano}* expira amanhã!\n\nRenove agora com *.planos*. ⏰`
       });
-      const arr = ler(PATHS.planosAtivos);
+      const arr = lerDB(PATHS.planosAtivos);
       const idx = arr.findIndex(x => x.id === p.id);
-      if (idx !== -1) { arr[idx].notificado24h = true; salvar(PATHS.planosAtivos, arr); }
+      if (idx !== -1) { arr[idx].notificado24h = true; salvarDB(PATHS.planosAtivos, arr); }
     }
   }
 }
 
-// ========== FLUXOS PENDENTES (MEMÓRIA) ==========
-const aguardandoLink  = new Map();
-const gruposPendentes = new Map();
+// ========== FLUXOS PENDENTES ==========
+const aguardandoLink   = new Map();
+const aguardandoSenha  = new Map();
 
 // ========== HELPERS ==========
 function formatarTempo(expiraEm) {
@@ -259,87 +285,145 @@ function formatarTempo(expiraEm) {
   return `${horas}h`;
 }
 
-// ========== WRAPPER DE BOTÕES SEGURO ==========
-// Envia quick_reply buttons (clicáveis diretamente no chat)
-async function enviarBotoes(sock, from, texto, rodape, botoes, infoMsg) {
+// ========== ENVIAR LIST MESSAGE (padrão 1 botão → caixa de opções) ==========
+// Implementação correta usando generateWAMessageFromContent + relayMessage
+async function sendList(sock, jid, { title, text, footer, buttonText, sections }, quoted) {
+  const listContent = {
+    listMessage: {
+      title:      title || '',
+      text:       text  || '',
+      footer:     footer || '',
+      buttonText: (buttonText || 'VER OPÇÕES').toUpperCase(),
+      listType:   1, // SINGLE_SELECT
+      sections:   sections.map(s => ({
+        title: s.title || '',
+        rows:  (s.rows || []).map(r => ({
+          rowId:       r.id,
+          title:       r.title,
+          description: r.description || ''
+        }))
+      }))
+    }
+  };
+
   try {
-    await sendButtons(sock, from, {
+    const msgOpts = quoted
+      ? { userJid: sock.user?.id, quoted }
+      : { userJid: sock.user?.id };
+
+    const msg = await generateWAMessageFromContent(jid, listContent, msgOpts);
+
+    await sock.relayMessage(jid, msg.message, {
+      messageId: msg.key.id,
+      additionalNodes: [{
+        tag: 'biz', attrs: {},
+        content: [{ tag: 'list', attrs: { v: '2', type: 'product_list' } }]
+      }]
+    });
+    return msg;
+  } catch (err) {
+    // Fallback: tenta sendMessage padrão
+    console.warn(chalk.yellow('[LIST FALLBACK]'), err.message);
+    try {
+      return await sock.sendMessage(jid, listContent, quoted ? { quoted } : {});
+    } catch {
+      // Fallback final: texto simples com os comandos
+      const linhas = sections.flatMap(s => (s.rows || []).map(r => `• ${r.title} → ${r.id}`));
+      return sock.sendMessage(jid, { text: `${text}\n\n${linhas.join('\n')}` }, quoted ? { quoted } : {});
+    }
+  }
+}
+
+// ========== ENVIAR 1 BOTÃO QUICK_REPLY (para confirmações simples) ==========
+async function sendBtn(sock, jid, texto, rodape, btnId, btnLabel, quoted) {
+  try {
+    await sendButtons(sock, jid, {
       text: texto,
-      footer: rodape,
-      buttons: botoes.map(b => ({ id: b.id, text: b.label }))
+      footer: rodape || '',
+      buttons: [{ id: btnId, text: btnLabel }]
     });
   } catch {
-    // fallback: texto + lista de comandos
-    const lista = botoes.map(b => `• ${b.label} → ${b.id}`).join('\n');
-    await sock.sendMessage(from, { text: `${texto}\n\n${lista}` }, infoMsg ? { quoted: infoMsg } : {});
+    // Fallback texto
+    await sock.sendMessage(jid, {
+      text: `${texto}\n\n👉 Responda: ${btnId}`
+    }, quoted ? { quoted } : {});
   }
 }
 
-// Envia list message (caixa/modal que abre ao clicar no botão)
-async function enviarLista(sock, from, titulo, texto, rodape, textoBotao, secoes, infoMsg) {
+// ========== NOTIFICAR ADMIN RECEBIDO ==========
+async function notificarAdminRecebido(sock, groupId) {
   try {
-    await sock.sendMessage(from, {
-      listMessage: {
-        title: titulo,
-        text: texto,
-        footer: rodape,
-        buttonText: textoBotao,
-        listType: 1,
-        sections: secoes
-      }
-    }, infoMsg ? { quoted: infoMsg } : {});
-  } catch {
-    // fallback: botões simples
-    const todosOsBotoes = secoes.flatMap(s =>
-      (s.rows || []).map(r => ({ id: r.rowId, label: r.title }))
-    );
-    await enviarBotoes(sock, from, `${titulo}\n\n${texto}`, rodape, todosOsBotoes.slice(0, 10), infoMsg);
+    const grupo = getGrupo(groupId);
+    updateGrupo(groupId, { aguardandoAdmin: false, adminRecebido: true });
+
+    // Notifica no grupo
+    await sock.sendMessage(groupId, {
+      text: `✅ *BotAluguel — Recebi cargo de admin!*\n\n🤖 Agora o responsável deve me ativar no privado com:\n*.ativar ${groupId}*`
+    });
+
+    // Notifica o dono no privado
+    const donoId = grupo?.dono;
+    if (donoId) {
+      await sock.sendMessage(donoId, {
+        text: `🎉 *Admin confirmado!*\n\n🏠 Grupo: *${grupo?.nomeGrupo || groupId}*\n✅ Já sou administrador!\n\nEnvie para ativar o bot:`
+      });
+      await sleep(500);
+      await sendList(sock, donoId, {
+        title: '✅ Bot pronto para ativar',
+        text:  `Grupo: *${grupo?.nomeGrupo || groupId}*`,
+        footer: 'BotAluguel',
+        buttonText: 'O QUE DESEJA FAZER',
+        sections: [{
+          title: 'Próximos passos',
+          rows: [
+            { id: `.ativar ${groupId}`, title: '🚀 Ativar o bot agora', description: 'Ativar bot neste grupo' },
+            { id: '.grupos',            title: '🏠 Ver meus grupos',    description: 'Lista de grupos' },
+            { id: '.planos',            title: '📦 Ver planos',         description: 'Gerenciar planos' }
+          ]
+        }]
+      });
+    }
+
+    console.log(chalk.green(`[ADMIN] Notificação OK → ${groupId}`));
+  } catch (err) {
+    console.error(chalk.red("[ADMIN NOTIFY ERRO]"), err.message);
   }
 }
 
-// ========== MENUS ==========
-async function enviarMenuPrincipal(sock, from, infoMsg, sender, nome) {
-  const moedas = getMoedas(sender);
-  const plano  = getPlanoAtivo(sender);
-  const grupos = getGruposDoUsuario(sender);
+// ========== VERIFICAR ADMIN NO GRUPO (manual pelo botão) ==========
+async function verificarAdminNoGrupo(sock, groupId, from) {
+  try {
+    const meta = await sock.groupMetadata(groupId);
+    const botJidBase = sock.user?.id?.split(':')[0];
+    const isAdmin = meta.participants.some(p =>
+      (p.id.split('@')[0] === botJidBase) &&
+      (p.admin === 'admin' || p.admin === 'superadmin')
+    );
 
-  const cabecalho =
-    `🤖 *BOTALUGUEL*\n${'═'.repeat(26)}\n\n` +
-    `👤 *${nome}*\n` +
-    `🪙 Moedas: *${moedas}*\n` +
-    `📦 Plano: *${plano ? plano.nomePlano : 'Nenhum ativo'}*\n` +
-    `🏠 Grupos: *${grupos.length}*`;
-
-  // Botões principais visíveis diretamente no chat
-  await enviarBotoes(sock, from, cabecalho, 'Selecione uma opção 👇', [
-    { label: '📊 Meu Painel',         id: '.painel'      },
-    { label: '💳 Recarregar Moedas',  id: '.recarregar'  },
-    { label: '📦 Ver Planos',         id: '.planos'      },
-    { label: '🔗 Adicionar ao Grupo', id: '.link'        },
-    { label: '🏠 Meus Grupos',        id: '.grupos'      },
-    { label: '❓ Ajuda',              id: '.ajuda'       }
-  ], infoMsg);
-}
-
-async function enviarMenuGrupo(sock, from, infoMsg) {
-  const grupo = getGrupo(from);
-  const plano = grupo?.dono ? getPlanoAtivo(grupo.dono) : null;
-  const tempo = plano ? formatarTempo(plano.expiraEm) : '?';
-
-  await enviarBotoes(sock, from,
-    `🤖 *BotAluguel* — Ativo!\n📦 Plano: *${grupo?.nomePlano || '?'}*\n⏳ Tempo: *${tempo}*`,
-    'O que deseja fazer?',
-    [
-      { label: '📊 Status do Plano', id: '.status' },
-      { label: 'ℹ️ Informações',     id: '.info'   }
-    ],
-    infoMsg
-  );
+    if (isAdmin) {
+      await notificarAdminRecebido(sock, groupId);
+    } else {
+      await sock.sendMessage(from, {
+        text: `❌ *Ainda não sou admin neste grupo.*\n\n🏠 *${getGrupo(groupId)?.nomeGrupo || groupId}*\n\nPeça a um administrador do grupo para me promover e clique novamente.`
+      });
+      await sleep(600);
+      // Reenviar botão de verificação
+      await sendBtn(sock, from,
+        `⏳ Aguardando promoção a admin no grupo:\n*${getGrupo(groupId)?.nomeGrupo || groupId}*`,
+        'Clique após me promover a administrador',
+        `verificar_admin_${groupId}`,
+        '✅ Já sou admin — verificar novamente',
+        null
+      );
+    }
+  } catch (err) {
+    await sock.sendMessage(from, {
+      text: `⚠️ Não consegui verificar admin: ${err.message}\n\nVerifique se ainda estou no grupo e tente novamente.`
+    });
+  }
 }
 
 // ========== BOT PRINCIPAL ==========
-let SOCK_GLOBAL = null; // referência global para acesso no admin event
-
 async function iniciarBot() {
   console.log(chalk.cyanBright("\n🤖 Iniciando BotAluguel..."));
   initDB();
@@ -356,8 +440,6 @@ async function iniciarBot() {
     markOnlineOnConnect: true,
     msgRetryCounterCache
   });
-
-  SOCK_GLOBAL = sock;
 
   if (!sock.authState.creds.registered) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -388,24 +470,18 @@ async function iniciarBot() {
 
   sock.ev.on("creds.update", saveCreds);
 
-  // ========== DETECÇÃO DE ADMIN — Método 1: group-participants.update ==========
+  // ========== DETECÇÃO DE ADMIN — Evento group-participants.update ==========
   sock.ev.on("group-participants.update", async (update) => {
     try {
       const { id: groupId, participants, action } = update;
       if (action !== 'promote') return;
-
-      const botJid = sock.user?.id?.split(':')[0] + '@s.whatsapp.net';
-      const botJidAlt = sock.user?.id?.replace(/:.*@/, '@'); // formato alternativo
-
-      const foiPromovido = participants.some(p =>
-        p === botJid || p === botJidAlt || p.split('@')[0] === botJid.split('@')[0]
-      );
+      const botBase = sock.user?.id?.split(':')[0];
+      const foiPromovido = participants.some(p => p.split('@')[0] === botBase);
       if (!foiPromovido) return;
-
-      console.log(chalk.green(`[ADMIN] Bot promovido a admin no grupo: ${groupId}`));
+      console.log(chalk.green(`[ADMIN EVT] Promovido no grupo: ${groupId}`));
       await notificarAdminRecebido(sock, groupId);
     } catch (err) {
-      console.error(chalk.red("[ADMIN EVENT ERRO]"), err.message);
+      console.error(chalk.red("[ADMIN EVT ERRO]"), err.message);
     }
   });
 
@@ -417,61 +493,77 @@ async function iniciarBot() {
       if (info.key.remoteJid === "status@broadcast") return;
       if (info.key.fromMe) return;
 
-      const from    = info.key.remoteJid;
+      const from   = info.key.remoteJid;
       const ehGrupo = from.endsWith('@g.us');
       const sender  = ehGrupo ? info.key.participant : from;
       const nome    = info.pushName || "Usuário";
 
-      // ========== DETECÇÃO DE ADMIN — Método 2: messageStubType ==========
-      // messageStubType 29 = PROMOTE (alguém foi promovido a admin no grupo)
+      // ========== DETECÇÃO DE ADMIN — messageStubType 29 (PROMOTE) ==========
       if (ehGrupo && info.messageStubType === 29) {
-        try {
-          const botJid = sock.user?.id?.split(':')[0] + '@s.whatsapp.net';
-          const promovido = info.messageStubParameters?.[0] || '';
-          if (
-            promovido === botJid ||
-            promovido.split('@')[0] === botJid.split('@')[0]
-          ) {
-            console.log(chalk.green(`[ADMIN STUB] Bot promovido no grupo: ${from}`));
-            await notificarAdminRecebido(sock, from);
-          }
-        } catch {}
+        const botBase   = sock.user?.id?.split(':')[0];
+        const promovido = info.messageStubParameters?.[0] || '';
+        if (promovido.split('@')[0] === botBase) {
+          console.log(chalk.green(`[ADMIN STUB] Promovido via stub no grupo: ${from}`));
+          await notificarAdminRecebido(sock, from);
+        }
         return;
       }
 
       if (!info.message) return;
 
-      let conteudo = info.message?.conversation ||
+      // ========== EXTRAIR CONTEÚDO (texto, botão, lista, interativo) ==========
+      let conteudo =
+        info.message?.conversation ||
         info.message?.extendedTextMessage?.text ||
         info.message?.listResponseMessage?.singleSelectReply?.selectedRowId ||
         info.message?.buttonsResponseMessage?.selectedButtonId ||
-        info.message?.templateButtonReplyMessage?.selectedId || "";
+        info.message?.templateButtonReplyMessage?.selectedId || '';
 
       if (!conteudo && info.message?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson) {
-        try { conteudo = JSON.parse(info.message.interactiveResponseMessage.nativeFlowResponseMessage.paramsJson).id || ""; } catch {}
+        try { conteudo = JSON.parse(info.message.interactiveResponseMessage.nativeFlowResponseMessage.paramsJson).id || ''; } catch {}
       }
 
-      const args    = conteudo.trim().split(/ +/).slice(1);
-      const q       = args.join(' ');
-      const ehDono  = sender === dono;
+      if (!conteudo) return;
 
       const enviar  = t => sock.sendMessage(from, { text: t }, { quoted: info });
       const reagir  = e => sock.sendMessage(from, { react: { text: e, key: info.key } });
-      const digitar = async (ms = 1200) => {
+      const digitar = async (ms = 1000) => {
         await sock.sendPresenceUpdate('composing', from);
         await sleep(ms);
         await sock.sendPresenceUpdate('paused', from);
       };
 
-      let prefixoUsado = null;
-      for (const p of prefixos) { if (conteudo.startsWith(p)) { prefixoUsado = p; break; } }
+      // ========== VERIFICAÇÃO DE ADMIN MANUAL (botão no privado) ==========
+      if (!ehGrupo && conteudo.startsWith('verificar_admin_')) {
+        const groupId = conteudo.replace('verificar_admin_', '');
+        await reagir('🔍');
+        await digitar(800);
+        await verificarAdminNoGrupo(sock, groupId, from);
+        return;
+      }
+
+      // ========== FLUXO SENHA (aguardando digitação) ==========
+      if (!ehGrupo && aguardandoSenha.has(sender)) {
+        aguardandoSenha.delete(sender);
+        const novaSenha = conteudo.trim();
+        if (novaSenha.length < 4) {
+          return enviar("❌ Senha muito curta! Use no mínimo 4 caracteres. Tente novamente com *.senha*");
+        }
+        if (novaSenha.length > 20) {
+          return enviar("❌ Senha muito longa! Use no máximo 20 caracteres.");
+        }
+        setSenha(sender, novaSenha);
+        return enviar(
+          `✅ *Senha ${getUser(sender)?.senha ? 'atualizada' : 'criada'} com sucesso!*\n\n🔐 Use essa senha para entrar no painel web junto com seu número.\n\n🌐 Acesse o site e faça login com:\n• Número: ${sender.split('@')[0]}\n• Senha: a que você acabou de definir`
+        );
+      }
 
       // ========== FLUXO AGUARDANDO LINK DO GRUPO ==========
       if (!ehGrupo && aguardandoLink.has(sender)) {
         aguardandoLink.delete(sender);
         const link = conteudo.trim();
         if (!link.includes('chat.whatsapp.com/')) {
-          return enviar("❌ Link inválido. Envie um link válido do grupo (ex: https://chat.whatsapp.com/XXXXX)\n\nTente novamente com *.link*");
+          return enviar("❌ Link inválido. Envie um link válido do grupo.\n\nTente novamente com *.link*");
         }
         const code = link.split('chat.whatsapp.com/')[1]?.split(/[?&\s]/)[0];
         if (!code) return enviar("❌ Não consegui extrair o código do link.");
@@ -483,14 +575,23 @@ async function iniciarBot() {
           let nomeGrupo = groupId;
           try { const meta = await sock.groupMetadata(groupId); nomeGrupo = meta.subject || groupId; } catch {}
           addGrupo(groupId, sender, nomeGrupo);
-          gruposPendentes.set(groupId, sender);
 
-          await enviar(
-            `✅ *Entrei no grupo!*\n\n🏠 *${nomeGrupo}*\n\nAgora preciso ser *administrador* do grupo para funcionar.\n\n📌 Peça a um admin para me promover. Você receberá uma notificação aqui quando receber admin!`
+          await enviar(`✅ *Entrei no grupo!*\n\n🏠 *${nomeGrupo}*\n\nAgora preciso ser *administrador* para funcionar.\n📌 Peça a um admin para me promover e clique no botão abaixo.`);
+          await sleep(800);
+
+          // Envia 1 botão para verificar admin manualmente
+          await sendBtn(sock, from,
+            `⚠️ *Aguardando cargo de admin*\n\n🏠 Grupo: *${nomeGrupo}*\n\nApós me promover a administrador, clique abaixo para confirmar.`,
+            'Verificação manual de admin',
+            `verificar_admin_${groupId}`,
+            '✅ Já sou admin — confirmar',
+            null
           );
+
+          // Avisa no grupo
           await sleep(3000);
           await sock.sendMessage(groupId, {
-            text: `👋 *Olá! Sou o BotAluguel!*\n\n🤖 Fui adicionado por *${nome}* para gerenciar este grupo.\n\n⚠️ Para funcionar, preciso ser *administrador*.\n\nPor favor, me promova a admin! 🙏`
+            text: `👋 *BotAluguel aqui!*\n\n🤖 Fui adicionado por *${nome}*.\n\n⚠️ Para ativar, preciso ser *administrador* deste grupo. Por favor, me promova! 🙏`
           });
         } catch (err) {
           await enviar(`❌ Erro ao entrar no grupo: ${err.message}`);
@@ -499,87 +600,192 @@ async function iniciarBot() {
       }
 
       createUser(sender, nome);
+
+      // ========== VERIFICAR PREFIXO ==========
+      let prefixoUsado = null;
+      for (const p of prefixos) { if (conteudo.startsWith(p)) { prefixoUsado = p; break; } }
       if (!prefixoUsado) return;
-      const cmd = conteudo.toLowerCase().slice(prefixoUsado.length).split(/\s+/)[0];
+
+      const args = conteudo.trim().slice(prefixoUsado.length).split(/\s+/);
+      const cmd  = args[0]?.toLowerCase() || '';
+      const q    = args.slice(1).join(' ');
+      const ehDono = sender === dono;
+
       if (!botAtivo && !ehDono) return;
 
       console.log(chalk.gray(`[CMD] ${nome} > ${prefixoUsado}${cmd}${q ? ' ' + q : ''}`));
 
-      // ===== COMANDOS DE GRUPO (após ativação) =====
+      // ========== COMANDOS DE GRUPO (após ativação) =====
       if (ehGrupo) {
         const grupo = getGrupo(from);
         if (!grupo || grupo.status !== 'ativo') return;
 
-        switch (cmd) {
-          case 'menu': case 'start': {
-            await reagir('🤖'); await digitar();
-            await enviarMenuGrupo(sock, from, info);
-            break;
-          }
-          case 'status': {
-            await reagir('📊');
-            const plano = getPlanoAtivo(grupo.dono);
-            if (!plano) return enviar("⚠️ Plano expirado! O responsável deve renovar com *.planos*");
-            await enviar(
-              `📊 *STATUS DO BOT*\n${'─'.repeat(22)}\n\n🏠 Grupo: *${grupo.nomeGrupo || 'Este grupo'}*\n✅ Status: *Ativo*\n📦 Plano: *${plano.nomePlano}*\n⏳ Tempo restante: *${formatarTempo(plano.expiraEm)}*`
-            );
-            break;
-          }
-          case 'info': {
-            await reagir('ℹ️');
-            const meta = await sock.groupMetadata(from).catch(() => null);
-            await enviar(
-              `ℹ️ *INFORMAÇÕES*\n${'─'.repeat(22)}\n\n🤖 Bot: *BotAluguel*\n🏠 Grupo: *${meta?.subject || from}*\n👥 Membros: *${meta?.participants?.length || '?'}*\n\nUse *.menu* para ver as opções.`
-            );
-            break;
-          }
+        if (cmd === 'menu' || cmd === 'start') {
+          await reagir('🤖'); await digitar();
+          const plano = getPlanoAtivo(grupo.dono);
+          await sendList(sock, from, {
+            title: '🤖 BotAluguel',
+            text:  `📦 Plano: *${grupo.nomePlano || '?'}* | ⏳ ${plano ? formatarTempo(plano.expiraEm) : '?'}`,
+            footer: 'Selecione uma opção',
+            buttonText: 'ABRIR MENU',
+            sections: [{
+              title: 'Opções do grupo',
+              rows: [
+                { id: '.status', title: '📊 Status do Plano', description: 'Ver tempo restante e detalhes' },
+                { id: '.info',   title: 'ℹ️ Informações',     description: 'Detalhes sobre o grupo' }
+              ]
+            }]
+          }, info);
+        } else if (cmd === 'status') {
+          await reagir('📊');
+          const plano = getPlanoAtivo(grupo.dono);
+          if (!plano) return enviar("⚠️ Plano expirado! O responsável deve renovar com *.planos*");
+          await enviar(`📊 *STATUS*\n\n🏠 ${grupo.nomeGrupo || 'Este grupo'}\n✅ Ativo\n📦 ${plano.nomePlano}\n⏳ ${formatarTempo(plano.expiraEm)}`);
+        } else if (cmd === 'info') {
+          await reagir('ℹ️');
+          const meta = await sock.groupMetadata(from).catch(() => null);
+          await enviar(`ℹ️ *INFORMAÇÕES*\n\n🏠 ${meta?.subject || from}\n👥 ${meta?.participants?.length || '?'} membros\n🤖 BotAluguel`);
         }
         return;
       }
 
-      // ===== COMANDOS PRIVADOS =====
+      // ========== COMANDOS PRIVADOS ==========
       switch (cmd) {
 
+        // ── MENU PRINCIPAL (1 botão → lista de opções) ──────────────────
         case 'menu': case 'start': case 'inicio': {
           await reagir('🤖'); await digitar();
-          await enviarMenuPrincipal(sock, from, info, sender, nome);
+          const moedas = getMoedas(sender);
+          const plano  = getPlanoAtivo(sender);
+          const grupos = getGruposDoUsuario(sender);
+
+          await sendList(sock, from, {
+            title: '🤖 BotAluguel',
+            text:
+              `👤 *${nome}*\n` +
+              `🪙 Moedas: *${moedas}*\n` +
+              `📦 Plano: *${plano ? plano.nomePlano : 'Nenhum'}*\n` +
+              `🏠 Grupos: *${grupos.length}*`,
+            footer: 'Selecione uma opção abaixo',
+            buttonText: '📋 ABRIR MENU',
+            sections: [{
+              title: '👤 Minha Conta',
+              rows: [
+                { id: '.painel',     title: '📊 Meu Painel',         description: 'Saldo, plano e grupos'       },
+                { id: '.recarregar', title: '💳 Recarregar Moedas',  description: 'Comprar moedas via PIX'      },
+                { id: '.planos',     title: '📦 Ver Planos',         description: 'Básico, Pro, Premium'        }
+              ]
+            }, {
+              title: '🏠 Grupos',
+              rows: [
+                { id: '.link',       title: '🔗 Adicionar ao Grupo',  description: 'Adicionar bot em um grupo' },
+                { id: '.grupos',     title: '🏠 Meus Grupos',         description: 'Listar grupos vinculados'  }
+              ]
+            }, {
+              title: '⚙️ Outros',
+              rows: [
+                { id: '.senha',      title: '🔐 Definir Senha',       description: 'Senha para o painel web'   },
+                { id: '.ajuda',      title: '❓ Ajuda',               description: 'Como usar o bot'           }
+              ]
+            }]
+          }, info);
           break;
         }
 
+        // ── PAINEL ──────────────────────────────────────────────────────
         case 'painel': case 'perfil': case 'eu': {
           await reagir('📊'); await digitar();
           const moedas = getMoedas(sender);
           const plano  = getPlanoAtivo(sender);
           const grupos = getGruposDoUsuario(sender);
+          const user   = getUser(sender);
 
-          let msg = `📊 *MEU PAINEL*\n${'═'.repeat(26)}\n\n👤 *${nome}*\n🪙 Moedas: *${moedas}*\n\n`;
+          let msg =
+            `📊 *MEU PAINEL*\n${'═'.repeat(26)}\n\n` +
+            `👤 *${nome}*\n` +
+            `📱 ${sender.split('@')[0]}\n` +
+            `🔐 Senha: ${user?.senha ? '✅ Definida' : '❌ Não definida'}\n` +
+            `🪙 Moedas: *${moedas}*\n\n`;
+
           if (plano) {
-            msg += `📦 *PLANO ATIVO*\n• ${plano.nomePlano}\n• Grupos: ${plano.maxGrupos === -1 ? '∞' : plano.maxGrupos}\n• Expira: ${formatarTempo(plano.expiraEm)}\n\n`;
+            msg += `📦 *PLANO ATIVO*\n• ${plano.nomePlano}\n• ${plano.maxGrupos === -1 ? '∞ grupos' : `${plano.maxGrupos} grupo(s)`}\n• Expira: ${formatarTempo(plano.expiraEm)}\n\n`;
           } else {
-            msg += `📦 *Sem plano ativo.* Use .planos\n\n`;
+            msg += `📦 *Sem plano ativo.*\n\n`;
           }
+
           if (grupos.length > 0) {
             msg += `🏠 *GRUPOS (${grupos.length})*\n`;
             for (const g of grupos) {
-              const ico = g.status === 'ativo' ? '✅' : g.aguardandoAdmin ? '⏳' : '🔴';
+              const ico = g.status === 'ativo' ? '✅' : g.adminRecebido ? '🟡' : '⏳';
               msg += `${ico} ${g.nomeGrupo || g.id}\n`;
             }
           } else {
-            msg += `🏠 *Sem grupos.* Use .link`;
+            msg += `🏠 *Nenhum grupo vinculado.*`;
           }
 
           await enviar(msg);
+          await sleep(400);
 
-          // Botões de ação rápida abaixo do painel
-          await sleep(500);
-          await enviarBotoes(sock, from, '⚡ *Ações rápidas*', '', [
-            { label: '💳 Recarregar',    id: '.recarregar' },
-            { label: '📦 Ver Planos',    id: '.planos'     },
-            { label: '🔗 Adicionar Grupo', id: '.link'     }
-          ], info);
+          await sendList(sock, from, {
+            title: '⚡ Ações rápidas',
+            text:  `Saldo: *${moedas} moedas* | Plano: *${plano ? plano.nomePlano : 'Nenhum'}*`,
+            footer: 'O que deseja fazer?',
+            buttonText: 'ESCOLHER AÇÃO',
+            sections: [{
+              title: 'Ações',
+              rows: [
+                { id: '.recarregar', title: '💳 Recarregar Moedas',   description: 'Comprar moedas via PIX'    },
+                { id: '.planos',     title: '📦 Ver Planos',          description: 'Comprar um plano'          },
+                { id: '.link',       title: '🔗 Adicionar Grupo',     description: 'Vincular um novo grupo'    },
+                { id: '.grupos',     title: '🏠 Meus Grupos',         description: 'Gerenciar grupos'          },
+                { id: '.senha',      title: '🔐 Definir/Trocar Senha', description: 'Senha para o painel web' }
+              ]
+            }]
+          });
           break;
         }
 
+        // ── SENHA DO PAINEL ──────────────────────────────────────────────
+        case 'senha': {
+          await reagir('🔐'); await digitar();
+          const user = getUser(sender);
+
+          if (q) {
+            // Senha fornecida diretamente: .senha minhasenha
+            const novaSenha = q.trim();
+            if (novaSenha.length < 4) return enviar("❌ Senha muito curta. Mínimo 4 caracteres.");
+            if (novaSenha.length > 20) return enviar("❌ Senha muito longa. Máximo 20 caracteres.");
+            setSenha(sender, novaSenha);
+            await enviar(
+              `✅ *Senha ${user?.senha ? 'atualizada' : 'criada'}!*\n\n` +
+              `🔐 Sua senha foi salva com segurança.\n\n` +
+              `🌐 *Acesso ao painel web:*\n` +
+              `• Número: \`${sender.split('@')[0]}\`\n` +
+              `• Senha: a que você definiu\n\n` +
+              `_Nunca compartilhe sua senha!_`
+            );
+          } else {
+            if (user?.senha) {
+              // Já tem senha → oferecer trocar
+              aguardandoSenha.set(sender, true);
+              await enviar(
+                `🔐 *Você já tem uma senha definida.*\n\n` +
+                `Para *trocar*, envie sua nova senha agora:\n_(mínimo 4, máximo 20 caracteres)_`
+              );
+            } else {
+              // Não tem senha → criar
+              aguardandoSenha.set(sender, true);
+              await enviar(
+                `🔐 *Criar senha do painel web*\n\n` +
+                `Envie sua senha agora:\n_(mínimo 4, máximo 20 caracteres)_\n\n` +
+                `Ou use: *.senha minhasenha*`
+              );
+            }
+          }
+          break;
+        }
+
+        // ── RECARREGAR ───────────────────────────────────────────────────
         case 'recarregar': case 'recarga': {
           await reagir('💳'); await digitar();
 
@@ -597,157 +803,208 @@ async function iniciarBot() {
                 const buf = Buffer.from(pag.qrCodeBase64.replace(/^data:image\/\w+;base64,/, ''), 'base64');
                 await sock.sendMessage(from, {
                   image: buf,
-                  caption: `💳 *PIX — R$ ${valor.toFixed(2)}*\n🪙 +${moedas} moedas após confirmação!\n⏳ Válido por 1 hora.`
+                  caption: `💳 *PIX — R$ ${valor.toFixed(2)}*\n🪙 +${moedas} moedas após pagamento!\n⏳ Válido por 1 hora.`
                 }, { quoted: info });
-              } catch { await enviar(`💳 *PIX — R$ ${valor.toFixed(2)}*\n🪙 +${moedas} moedas!`); }
+              } catch {
+                await enviar(`💳 *PIX — R$ ${valor.toFixed(2)}*\n🪙 +${moedas} moedas!`);
+              }
             }
-            await sleep(2000);
+            await sleep(1500);
             await sock.sendMessage(from, { text: '```' + pag.copiaCola + '```' }, { quoted: info });
             monitorarPix(pag.txid, from, sock);
           } else {
-            // Menu de recarga com LIST (caixa de seleção)
-            await enviarLista(sock, from,
-              '💳 Recarregar Moedas',
-              `🪙 Saldo atual: *${getMoedas(sender)} moedas*\n\n1 BRL = 100 moedas (modo teste)\nMínimo: R$ 0,01`,
-              'Pagamento instantâneo via PIX',
-              '💳 ESCOLHER VALOR',
-              [{
-                title: 'Escolha o valor',
+            // Mostra lista com valores pré-definidos (1 botão → caixa)
+            await sendList(sock, from, {
+              title: '💳 Recarregar Moedas',
+              text:
+                `🪙 Saldo atual: *${getMoedas(sender)} moedas*\n\n` +
+                `*1 BRL = 100 moedas*\nMínimo: R$ 0,01\n\nEscolha um valor ou use:\n*.recarregar 5* (ex: R$ 5,00)`,
+              footer: 'Pagamento via PIX — confirmação automática',
+              buttonText: 'ESCOLHER VALOR',
+              sections: [{
+                title: 'Valores disponíveis',
                 rows: [
-                  { title: 'R$ 0,01 = 1 moeda',    rowId: '.recarregar 0.01',  description: 'Teste rápido' },
-                  { title: 'R$ 0,10 = 10 moedas',  rowId: '.recarregar 0.10',  description: 'Pacote mínimo' },
-                  { title: 'R$ 1,00 = 100 moedas',  rowId: '.recarregar 1',    description: 'Pacote básico' },
-                  { title: 'R$ 5,00 = 500 moedas',  rowId: '.recarregar 5',    description: 'Pacote médio'  },
-                  { title: 'R$ 10,00 = 1000 moedas',rowId: '.recarregar 10',   description: 'Pacote avançado' }
+                  { id: '.recarregar 0.01',  title: 'R$ 0,01 — 1 moeda',      description: '🧪 Teste rápido'        },
+                  { id: '.recarregar 0.10',  title: 'R$ 0,10 — 10 moedas',    description: '📦 Pacote mínimo'       },
+                  { id: '.recarregar 1',     title: 'R$ 1,00 — 100 moedas',   description: '💼 Pacote básico'       },
+                  { id: '.recarregar 5',     title: 'R$ 5,00 — 500 moedas',   description: '🚀 Pacote intermediário' },
+                  { id: '.recarregar 10',    title: 'R$ 10,00 — 1000 moedas', description: '⭐ Pacote avançado'      },
+                  { id: '.recarregar 25',    title: 'R$ 25,00 — 2500 moedas', description: '👑 Pacote premium'      }
                 ]
-              }],
-              info
-            );
+              }]
+            }, info);
           }
           break;
         }
 
+        // ── PLANOS ───────────────────────────────────────────────────────
         case 'planos': {
           await reagir('📦'); await digitar();
-          const moedas = getMoedas(sender);
+          const moedas    = getMoedas(sender);
           const planoAtivo = getPlanoAtivo(sender);
 
-          let msg = `📦 *PLANOS DISPONÍVEIS*\n${'═'.repeat(26)}\n\n🪙 Suas moedas: *${moedas}*\n\n`;
-          for (const [, p] of Object.entries(PLANOS)) {
-            const pode = moedas >= p.moedas ? '✅' : '❌';
-            msg += `${p.nome} — ${p.moedas} 🪙\n• ${p.dias} dias • ${p.maxGrupos === -1 ? '∞ grupos' : `${p.maxGrupos} grupo(s)`} • ${pode}\n\n`;
-          }
-          if (planoAtivo) msg += `📌 Plano atual: ${planoAtivo.nomePlano} (expira em ${formatarTempo(planoAtivo.expiraEm)})`;
-
-          await enviar(msg);
-          await sleep(400);
-
-          // Botões de compra diretos
-          await enviarBotoes(sock, from,
-            `🛒 *Comprar plano* — Saldo: ${moedas} 🪙`,
-            'Selecione o plano desejado',
-            [
-              { label: '⭐ Básico (1🪙 • 1 grupo)',     id: '.confirmar_compra basico'   },
-              { label: '💎 Pro (1🪙 • 5 grupos)',        id: '.confirmar_compra pro'      },
-              { label: '👑 Premium (1🪙 • ilimitado)',   id: '.confirmar_compra premium'  }
-            ],
-            info
-          );
+          await sendList(sock, from, {
+            title: '📦 Planos Disponíveis',
+            text:
+              `🪙 Seu saldo: *${moedas} moedas*\n\n` +
+              (planoAtivo
+                ? `📌 Plano atual: *${planoAtivo.nomePlano}* — expira em ${formatarTempo(planoAtivo.expiraEm)}\n`
+                : `📌 Sem plano ativo.\n`) +
+              `\nSelecione um plano para comprar:`,
+            footer: 'BotAluguel — Aluguel de bot WhatsApp',
+            buttonText: 'ESCOLHER PLANO',
+            sections: [{
+              title: 'Planos disponíveis',
+              rows: [
+                {
+                  id: `.comprar basico`,
+                  title: `⭐ Básico — ${PLANOS.basico.moedas}🪙`,
+                  description: `${PLANOS.basico.dias} dias • 1 grupo • ${moedas >= PLANOS.basico.moedas ? '✅ Disponível' : '❌ Saldo insuficiente'}`
+                },
+                {
+                  id: `.comprar pro`,
+                  title: `💎 Pro — ${PLANOS.pro.moedas}🪙`,
+                  description: `${PLANOS.pro.dias} dias • 5 grupos • ${moedas >= PLANOS.pro.moedas ? '✅ Disponível' : '❌ Saldo insuficiente'}`
+                },
+                {
+                  id: `.comprar premium`,
+                  title: `👑 Premium — ${PLANOS.premium.moedas}🪙`,
+                  description: `${PLANOS.premium.dias} dias • Ilimitado • ${moedas >= PLANOS.premium.moedas ? '✅ Disponível' : '❌ Saldo insuficiente'}`
+                }
+              ]
+            }]
+          }, info);
           break;
         }
 
+        // ── COMPRAR PLANO ────────────────────────────────────────────────
         case 'comprar': {
           await reagir('🛒');
           const planKey = q.toLowerCase().trim();
-          if (!PLANOS[planKey]) {
-            return enviarBotoes(sock, from,
-              `❌ Plano inválido. Escolha abaixo:`,
-              '',
-              [
-                { label: '⭐ Básico',  id: '.confirmar_compra basico'  },
-                { label: '💎 Pro',     id: '.confirmar_compra pro'     },
-                { label: '👑 Premium', id: '.confirmar_compra premium' }
-              ],
-              info
-            );
-          }
-          const plano  = PLANOS[planKey];
-          const moedas = getMoedas(sender);
+          const plano   = PLANOS[planKey];
 
+          if (!plano) {
+            return sendList(sock, from, {
+              title: '❌ Plano inválido',
+              text:  'Escolha um plano válido:',
+              footer: '',
+              buttonText: 'ESCOLHER PLANO',
+              sections: [{
+                title: 'Planos',
+                rows: [
+                  { id: '.comprar basico',  title: '⭐ Básico',  description: `${PLANOS.basico.moedas}🪙 • 1 grupo`     },
+                  { id: '.comprar pro',     title: '💎 Pro',     description: `${PLANOS.pro.moedas}🪙 • 5 grupos`       },
+                  { id: '.comprar premium', title: '👑 Premium', description: `${PLANOS.premium.moedas}🪙 • ilimitado` }
+                ]
+              }]
+            }, info);
+          }
+
+          const moedas = getMoedas(sender);
           if (moedas < plano.moedas) {
             return enviar(
-              `❌ *Moedas insuficientes!*\n\nVocê tem: *${moedas}*\nNecessário: *${plano.moedas}*\n\nUse *.recarregar* para comprar moedas via PIX.`
+              `❌ *Saldo insuficiente!*\n\nVocê tem: *${moedas}*\nNecessário: *${plano.moedas}*\n\nRecarregue com *.recarregar*`
             );
           }
 
           await digitar();
-          await enviarBotoes(sock, from,
-            `🛒 *Confirmar compra?*\n\n${plano.nome}\n🪙 Custo: ${plano.moedas} moeda(s)\n⏳ ${plano.dias} dias\n🏠 ${plano.maxGrupos === -1 ? '∞ grupos' : `${plano.maxGrupos} grupo(s)`}\n\nSeu saldo: ${moedas} moedas`,
-            'Confirme para ativar',
-            [
-              { label: `✅ Confirmar — ${plano.nome}`, id: `.confirmar_compra ${planKey}` },
-              { label: '❌ Cancelar',                  id: '.planos'                      }
-            ],
-            info
-          );
+
+          // Confirmação: 1 botão → lista com confirmar/cancelar
+          await sendList(sock, from, {
+            title: '🛒 Confirmar compra',
+            text:
+              `${plano.nome}\n` +
+              `🪙 Custo: *${plano.moedas} moeda(s)*\n` +
+              `⏳ Duração: *${plano.dias} dias*\n` +
+              `🏠 Grupos: *${plano.maxGrupos === -1 ? 'Ilimitados' : plano.maxGrupos}*\n\n` +
+              `Saldo após compra: *${moedas - plano.moedas} moedas*`,
+            footer: 'Escolha uma opção',
+            buttonText: 'RESPONDER',
+            sections: [{
+              title: 'Confirmação',
+              rows: [
+                { id: `.confirmar_compra ${planKey}`, title: `✅ Confirmar — ${plano.nome}`, description: 'Ativar plano agora'  },
+                { id: '.planos',                      title: '❌ Cancelar',                 description: 'Voltar aos planos' }
+              ]
+            }]
+          }, info);
           break;
         }
 
+        // ── CONFIRMAR COMPRA ─────────────────────────────────────────────
         case 'confirmar_compra': {
           const planKey = q.toLowerCase().trim();
-          const plano = PLANOS[planKey];
+          const plano   = PLANOS[planKey];
           if (!plano) return;
           await digitar();
           const ok = ativarPlano(sender, planKey);
           if (ok) {
             await reagir('🎉');
             await enviar(
-              `✅ *Plano ${plano.nome} ativado!*\n${'═'.repeat(26)}\n\n🪙 Gasto: *${plano.moedas}*\n💰 Saldo: *${getMoedas(sender)} moedas*\n⏳ Duração: *${plano.dias} dias*\n🏠 Grupos: *${plano.maxGrupos === -1 ? '∞ ilimitados' : plano.maxGrupos}*`
+              `✅ *${plano.nome} ativado!*\n${'═'.repeat(26)}\n\n` +
+              `🪙 Gasto: *${plano.moedas}*\n💰 Saldo: *${getMoedas(sender)} moedas*\n` +
+              `⏳ Duração: *${plano.dias} dias*\n🏠 Grupos: *${plano.maxGrupos === -1 ? 'Ilimitados' : plano.maxGrupos}*`
             );
             await sleep(500);
-            await enviarBotoes(sock, from,
-              '🔗 Próximo passo: adicione o bot ao seu grupo!',
-              '',
-              [
-                { label: '🔗 Adicionar ao Grupo', id: '.link'   },
-                { label: '🏠 Meus Grupos',         id: '.grupos' }
-              ],
-              info
-            );
+            await sendList(sock, from, {
+              title: '🔗 Próximo passo',
+              text:  'Adicione o bot ao seu grupo para começar!',
+              footer: '',
+              buttonText: 'O QUE FAZER AGORA',
+              sections: [{
+                title: 'Próximos passos',
+                rows: [
+                  { id: '.link',   title: '🔗 Adicionar ao Grupo', description: 'Vincular o bot a um grupo' },
+                  { id: '.grupos', title: '🏠 Meus Grupos',        description: 'Ver grupos vinculados'     }
+                ]
+              }]
+            });
           } else {
             await enviar("❌ Erro ao ativar. Verifique seu saldo com *.painel*");
           }
           break;
         }
 
+        // ── LINK DO GRUPO ────────────────────────────────────────────────
         case 'link': case 'adicionar': {
           await reagir('🔗');
           const plano = getPlanoAtivo(sender);
           if (!plano) {
-            return enviarBotoes(sock, from,
-              `❌ *Sem plano ativo!*\n\nAdquira um plano antes de adicionar grupos.`,
-              '',
-              [
-                { label: '📦 Ver Planos', id: '.planos'     },
-                { label: '💳 Recarregar', id: '.recarregar' }
-              ],
-              info
-            );
+            return sendList(sock, from, {
+              title: '❌ Sem plano ativo',
+              text:  'Você precisa de um plano para adicionar grupos.',
+              footer: '',
+              buttonText: 'O QUE FAZER',
+              sections: [{
+                title: 'Opções',
+                rows: [
+                  { id: '.planos',     title: '📦 Ver Planos',     description: 'Comprar um plano' },
+                  { id: '.recarregar', title: '💳 Recarregar',     description: 'Comprar moedas'   }
+                ]
+              }]
+            }, info);
           }
+
           const gruposAtivos = countGruposAtivos(sender);
           if (plano.maxGrupos !== -1 && gruposAtivos >= plano.maxGrupos) {
             return enviar(
-              `❌ *Limite atingido!*\n\nSeu plano ${plano.nomePlano} permite *${plano.maxGrupos}* grupo(s).\nVocê já tem *${gruposAtivos}* ativo(s).\n\nFaça upgrade: *.comprar pro* ou *.comprar premium*`
+              `❌ *Limite atingido!*\n\nSeu plano permite *${plano.maxGrupos}* grupo(s).\nVocê já tem *${gruposAtivos}* ativo(s).\n\nFaça upgrade: *.comprar pro* ou *.comprar premium*`
             );
           }
+
           aguardandoLink.set(sender, true);
           await digitar();
           await enviar(
-            `🔗 *ADICIONAR BOT AO GRUPO*\n${'─'.repeat(26)}\n\n📋 Plano: *${plano.nomePlano}*\n🏠 Grupos: *${gruposAtivos}/${plano.maxGrupos === -1 ? '∞' : plano.maxGrupos}*\n\n📎 Envie o link de convite do grupo:\n\n_Exemplo: https://chat.whatsapp.com/XXXXX_\n\n_(Grupo → 3 pontos → Convidar pelo link → Copiar link)_`
+            `🔗 *ADICIONAR BOT AO GRUPO*\n${'─'.repeat(26)}\n\n` +
+            `📋 Plano: *${plano.nomePlano}*\n🏠 Grupos: *${gruposAtivos}/${plano.maxGrupos === -1 ? '∞' : plano.maxGrupos}*\n\n` +
+            `📎 *Envie o link de convite do grupo:*\n\n` +
+            `_Ex: https://chat.whatsapp.com/XXXXXXX_\n\n` +
+            `_(Grupo → ⋮ → Convidar pelo link → Copiar)_`
           );
           break;
         }
 
+        // ── ATIVAR BOT NO GRUPO ──────────────────────────────────────────
         case 'ativar': {
           await reagir('✅');
           const groupId = q.trim();
@@ -755,51 +1012,68 @@ async function iniciarBot() {
           if (!groupId) {
             const grupos = getGruposDoUsuario(sender).filter(g => g.adminRecebido && g.status !== 'ativo');
             if (grupos.length === 0) {
-              return enviar(`❌ Nenhum grupo pronto para ativar.\n\nUse *.link* para adicionar o bot a um grupo.`);
+              return sendList(sock, from, {
+                title: '⚠️ Nenhum grupo pronto',
+                text:  'Use .link para adicionar o bot a um grupo primeiro.',
+                footer: '',
+                buttonText: 'O QUE FAZER',
+                sections: [{
+                  title: 'Opções',
+                  rows: [{ id: '.link', title: '🔗 Adicionar ao Grupo', description: 'Vincular um grupo' }]
+                }]
+              }, info);
             }
-            let msg = `✅ *ATIVAR BOT*\n\nGrupos prontos:\n\n`;
-            grupos.forEach((g, i) => { msg += `${i+1}. *${g.nomeGrupo}*\n\`\`\`${g.id}\`\`\`\n\n`; });
-            msg += `Envie: *.ativar [ID do grupo]*`;
-            return enviar(msg);
+
+            const rows = grupos.map(g => ({
+              id: `.ativar ${g.id}`,
+              title: `🟡 ${g.nomeGrupo || 'Grupo'}`,
+              description: 'Clique para ativar o bot aqui'
+            }));
+
+            return sendList(sock, from, {
+              title: '✅ Ativar Bot',
+              text:  'Grupos prontos para ativar (já tenho admin):',
+              footer: '',
+              buttonText: 'SELECIONAR GRUPO',
+              sections: [{ title: 'Grupos disponíveis', rows }]
+            }, info);
           }
 
           const grupo = getGrupo(groupId);
-          if (!grupo)           return enviar("❌ Grupo não encontrado.");
-          if (grupo.dono !== sender && !ehDono) return enviar("❌ Este grupo não pertence a você.");
-          if (!grupo.adminRecebido && !ehDono) return enviar("⚠️ Bot ainda não é admin neste grupo. Peça a um admin para me promover.");
-          if (grupo.status === 'ativo') return enviar("✅ O bot já está ativo neste grupo!");
+          if (!grupo)                              return enviar("❌ Grupo não encontrado.");
+          if (grupo.dono !== sender && !ehDono)    return enviar("❌ Este grupo não pertence a você.");
+          if (!grupo.adminRecebido && !ehDono)     return enviar("⚠️ Ainda não sou admin neste grupo.");
+          if (grupo.status === 'ativo')            return enviar("✅ O bot já está ativo neste grupo!");
 
           const plano = getPlanoAtivo(sender);
-          if (!plano) return enviar("❌ Sem plano ativo! Adquira um com *.planos*");
+          if (!plano)                              return enviar("❌ Sem plano ativo! Use *.planos*");
 
           const gruposAtivos = countGruposAtivos(sender);
           if (plano.maxGrupos !== -1 && gruposAtivos >= plano.maxGrupos) {
-            return enviar(`❌ Limite de grupos atingido (${plano.maxGrupos}). Faça upgrade.`);
+            return enviar(`❌ Limite atingido (${plano.maxGrupos}). Faça upgrade.`);
           }
 
           updateGrupo(groupId, { status: 'ativo', ativadoEm: new Date().toISOString(), nomePlano: plano.nomePlano });
           await digitar();
-          await enviar(
-            `✅ *Bot ativado!*\n\n🏠 ${grupo.nomeGrupo || groupId}\n📦 ${plano.nomePlano}\n⏳ ${formatarTempo(plano.expiraEm)}`
-          );
-          await sock.sendMessage(groupId, {
-            text: `🎉 *BotAluguel — Ativado!*\n\nUse *.menu* para ver as opções disponíveis. 🤖`
-          });
+          await enviar(`✅ *Bot ativado!*\n\n🏠 ${grupo.nomeGrupo || groupId}\n📦 ${plano.nomePlano}\n⏳ ${formatarTempo(plano.expiraEm)}`);
+          await sock.sendMessage(groupId, { text: `🎉 *BotAluguel — Ativado!*\n\nUse *.menu* para ver as opções. 🤖` });
           break;
         }
 
+        // ── GRUPOS ───────────────────────────────────────────────────────
         case 'grupos': case 'meusgrupos': {
           await reagir('🏠'); await digitar();
           const grupos = getGruposDoUsuario(sender);
           const plano  = getPlanoAtivo(sender);
 
           if (grupos.length === 0) {
-            return enviarBotoes(sock, from,
-              `🏠 *Nenhum grupo vinculado.*\n\nAdicione o bot ao seu grupo para começar!`,
-              '',
-              [{ label: '🔗 Adicionar ao Grupo', id: '.link' }],
-              info
-            );
+            return sendList(sock, from, {
+              title: '🏠 Nenhum grupo',
+              text:  'Você ainda não tem grupos vinculados.',
+              footer: '',
+              buttonText: 'O QUE FAZER',
+              sections: [{ title: 'Opções', rows: [{ id: '.link', title: '🔗 Adicionar ao Grupo', description: 'Vincular um grupo' }] }]
+            }, info);
           }
 
           let msg = `🏠 *MEUS GRUPOS (${grupos.length})*\n${'═'.repeat(26)}\n\n`;
@@ -808,88 +1082,60 @@ async function iniciarBot() {
             msg += `${i+1}. ${ico} *${g.nomeGrupo || 'Grupo'}*\n`;
             if (g.status === 'ativo' && plano) msg += `   ⏳ ${formatarTempo(plano.expiraEm)}\n`;
             if (g.adminRecebido && g.status !== 'ativo') msg += `   ➜ \`.ativar ${g.id}\`\n`;
-            if (!g.adminRecebido) msg += `   ➜ Aguardando ser promovido a admin\n`;
+            if (!g.adminRecebido) msg += `   ➜ Aguardando admin\n`;
             msg += '\n';
           }
           await enviar(msg);
           break;
         }
 
+        // ── AJUDA ────────────────────────────────────────────────────────
         case 'ajuda': case 'help': {
           await reagir('❓'); await digitar();
-          await enviar(
-            `❓ *GUIA RÁPIDO*\n${'═'.repeat(26)}\n\n` +
-            `*1. Recarregue moedas*\n.recarregar → pague via PIX\n\n` +
-            `*2. Compre um plano*\n.planos → veja os planos\n.comprar [plano] → ative\n\n` +
-            `*3. Adicione ao grupo*\n.link → envie o link do grupo\n\n` +
-            `*4. Ative o bot*\n.ativar → após receber admin\n\n` +
-            `${'─'.repeat(26)}\n` +
-            `*.menu* *.painel* *.recarregar*\n*.planos* *.comprar* *.link*\n*.ativar* *.grupos* *.ajuda*`
-          );
-          await sleep(400);
-          await enviarBotoes(sock, from, '⚡ Ações rápidas', '', [
-            { label: '📊 Meu Painel',   id: '.painel'     },
-            { label: '📦 Ver Planos',   id: '.planos'     },
-            { label: '🔗 Adicionar',    id: '.link'       }
-          ], info);
+          await sendList(sock, from, {
+            title: '❓ Ajuda — BotAluguel',
+            text:
+              '*Como usar:*\n\n' +
+              '1️⃣ Recarregue moedas via PIX\n' +
+              '2️⃣ Compre um plano\n' +
+              '3️⃣ Adicione o bot ao grupo (.link)\n' +
+              '4️⃣ Ative após receber admin (.ativar)\n\n' +
+              'Dúvidas? Selecione abaixo:',
+            footer: 'BotAluguel — Suporte',
+            buttonText: 'VER OPÇÕES',
+            sections: [{
+              title: 'Guia rápido',
+              rows: [
+                { id: '.recarregar', title: '💳 Recarregar Moedas',   description: 'Comprar moedas via PIX'   },
+                { id: '.planos',     title: '📦 Ver Planos',          description: 'Básico, Pro, Premium'     },
+                { id: '.link',       title: '🔗 Adicionar ao Grupo',  description: 'Vincular grupo ao bot'    },
+                { id: '.grupos',     title: '🏠 Meus Grupos',         description: 'Status dos seus grupos'  },
+                { id: '.senha',      title: '🔐 Senha do Painel Web', description: 'Acesso ao painel online' }
+              ]
+            }]
+          }, info);
           break;
         }
 
-        // ===== COMANDOS DO DONO =====
-        case 'ligar':   { if (!ehDono) return; botAtivo = true;  return enviar("✅ Bot ligado!"); }
-        case 'desligar':{ if (!ehDono) return; botAtivo = false; return enviar("🔴 Bot desligado!"); }
+        // ── COMANDOS DO DONO ─────────────────────────────────────────────
+        case 'ligar':    { if (!ehDono) return; botAtivo = true;  return enviar("✅ Bot ligado!"); }
+        case 'desligar': { if (!ehDono) return; botAtivo = false; return enviar("🔴 Bot desligado!"); }
         case 'darmoedas': {
           if (!ehDono) return;
           const [num, qtd] = q.split(' ');
-          if (!num || !qtd) return enviar("❌ Use: .darmoedas [número] [quantidade]");
+          if (!num || !qtd) return enviar("❌ Use: .darmoedas [número] [qtd]");
           const targetId = num.replace(/\D/g, '') + '@s.whatsapp.net';
           createUser(targetId, 'Usuário');
           addMoedas(targetId, parseInt(qtd));
           return enviar(`✅ ${qtd} moedas → ${num}`);
         }
-        case 'usuarios': {
-          if (!ehDono) return;
-          return enviar(`👥 Usuários: *${ler(PATHS.usuarios).length}*`);
-        }
+        case 'usuarios': { if (!ehDono) return; return enviar(`👥 Usuários: *${lerDB(PATHS.usuarios).length}*`); }
       }
 
     } catch (err) {
-      console.error(chalk.red("[ERRO]"), err.message);
+      console.error(chalk.red("[ERRO]"), err.message, err.stack?.split('\n')[1]);
     }
   });
-}
-
-// ========== NOTIFICAÇÃO ADMIN RECEBIDO (função compartilhada) ==========
-async function notificarAdminRecebido(sock, groupId) {
-  try {
-    const grupo = getGrupo(groupId);
-
-    if (grupo) {
-      // Grupo registrado — notificar dono
-      updateGrupo(groupId, { aguardandoAdmin: false, adminRecebido: true });
-
-      await sock.sendMessage(groupId, {
-        text: `✅ *BotAluguel — Sou admin agora!*\n\n🤖 Obrigado! Agora o responsável deve me ativar enviando no privado:\n\n*.ativar ${groupId}*`
-      });
-
-      if (grupo.dono) {
-        await sock.sendMessage(grupo.dono, {
-          text:
-            `🎉 *Admin recebido!*\n\n🏠 Grupo: *${grupo.nomeGrupo || groupId}*\n\n✅ Já sou admin! Para ativar o bot envie:\n\n*.ativar ${groupId}*`
-        });
-      }
-    } else {
-      // Grupo NÃO registrado (bot foi adicionado diretamente sem usar .link)
-      await sock.sendMessage(groupId, {
-        text:
-          `✅ *BotAluguel — Sou admin neste grupo!*\n\n🤖 Para me ativar aqui, o responsável deve:\n1. Me enviar no privado: *.menu*\n2. Comprar um plano com *.planos*\n3. Usar *.link* para vincular este grupo`
-      });
-    }
-
-    console.log(chalk.green(`[ADMIN] Notificação enviada para grupo: ${groupId}`));
-  } catch (err) {
-    console.error(chalk.red("[ADMIN NOTIFY ERRO]"), err.message);
-  }
 }
 
 iniciarBot();

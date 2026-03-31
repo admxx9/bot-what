@@ -4,73 +4,89 @@ const BASE_URL = '/api'
 
 const client = axios.create({ baseURL: BASE_URL })
 
+// Envia phone + password em cada request autenticado
 client.interceptors.request.use(config => {
-  const phone = localStorage.getItem('ba_phone')
-  if (phone) config.headers['x-user-phone'] = phone
+  const phone    = localStorage.getItem('ba_phone')
+  const password = localStorage.getItem('ba_password')
+  if (phone)    config.headers['x-user-phone']    = phone
+  if (password) config.headers['x-user-password'] = password
   return config
 })
 
+// Interceptor de resposta: se 401, limpar sessão
+client.interceptors.response.use(
+  res => res,
+  err => {
+    if (err.response?.status === 401) {
+      localStorage.removeItem('ba_phone')
+      localStorage.removeItem('ba_password')
+    }
+    return Promise.reject(err)
+  }
+)
+
 export interface User {
-  id: string
-  nome: string
-  moedas: number
-  plano: PlanoAtivo | null
-  grupos: number
+  id:          string
+  nome:        string
+  moedas:      number
+  temSenha:    boolean
+  plano:       PlanoAtivo | null
+  grupos:      number
   gruposAtivos: number
 }
 
 export interface PlanoAtivo {
-  id: string
-  userId: string
-  plano: string
+  id:        string
+  userId:    string
+  plano:     string
   nomePlano: string
-  status: string
+  status:    string
   maxGrupos: number
   ativadoEm: string
-  expiraEm: string
+  expiraEm:  string
 }
 
 export interface Grupo {
-  id: string
-  nomeGrupo: string
-  status: 'ativo' | 'inativo'
+  id:             string
+  nomeGrupo:      string
+  status:         'ativo' | 'inativo'
   aguardandoAdmin: boolean
-  adminRecebido: boolean
-  adicionadoEm: string
-  ativadoEm?: string
-  nomePlano?: string
-  expiraEm?: string
+  adminRecebido:  boolean
+  adicionadoEm:   string
+  ativadoEm?:     string
+  nomePlano?:     string
+  expiraEm?:      string
 }
 
 export interface PlanoDisponivel {
-  id: string
-  nome: string
-  moedas: number
-  dias: number
+  id:        string
+  nome:      string
+  moedas:    number
+  dias:      number
   maxGrupos: number
 }
 
 export interface Pagamento {
-  txid: string
-  tipo: string
-  valor: number
-  moedas: number
-  status: string
+  txid:     string
+  tipo:     string
+  valor:    number
+  moedas:   number
+  status:   string
   criadoEm: string
 }
 
 export interface PixResponse {
-  txid: string
-  moedas: number
-  valor: number
-  qrCode: string
+  txid:     string
+  moedas:   number
+  valor:    number
+  qrCode:   string
   copiaCola: string
   expiraEm: string
 }
 
 // ===== Auth =====
-export const login = async (phone: string) => {
-  const { data } = await client.post('/auth/login', { phone })
+export const login = async (phone: string, password?: string) => {
+  const { data } = await client.post('/auth/login', { phone, password })
   return data
 }
 

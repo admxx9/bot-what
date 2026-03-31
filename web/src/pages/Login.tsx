@@ -1,22 +1,22 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Bot, Phone, ArrowRight, Loader2 } from 'lucide-react'
+import { Bot, Phone, Lock, ArrowRight, Eye, EyeOff, MessageSquare } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 
 export default function Login() {
-  const [phone, setPhone]   = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError]   = useState('')
-  const { signIn }           = useAuth()
-  const navigate             = useNavigate()
+  const [phone,       setPhone]       = useState('')
+  const [password,    setPassword]    = useState('')
+  const [showPwd,     setShowPwd]     = useState(false)
+  const [loading,     setLoading]     = useState(false)
+  const [error,       setError]       = useState('')
+  const [semSenha,    setSemSenha]    = useState(false)
+  const { signIn }                    = useAuth()
+  const navigate                      = useNavigate()
 
-  const formatPhone = (val: string) => {
-    const digits = val.replace(/\D/g, '').slice(0, 13)
-    return digits
-  }
+  const formatPhone = (val: string) => val.replace(/\D/g, '').slice(0, 13)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -28,10 +28,21 @@ export default function Login() {
     setError('')
     setLoading(true)
     try {
-      await signIn(digits)
+      await signIn(digits, password || undefined)
       navigate('/')
-    } catch {
-      setError('Erro ao fazer login. Verifique o número e tente novamente.')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || ''
+
+      if (msg.includes('não encontrado') || msg.includes('bot primeiro')) {
+        setError('Número não cadastrado. Envie .menu para o bot no WhatsApp primeiro.')
+      } else if (msg.includes('Senha obrigatória') || msg.includes('senha')) {
+        setSemSenha(false)
+        setError('Senha incorreta. Defina sua senha no bot com: .senha minhasenha')
+      } else if (msg.includes('WhatsApp')) {
+        setError(msg)
+      } else {
+        setError(msg || 'Erro ao fazer login. Verifique os dados e tente novamente.')
+      }
     } finally {
       setLoading(false)
     }
@@ -69,7 +80,7 @@ export default function Login() {
         <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/60 backdrop-blur-sm p-6 shadow-2xl">
           <h2 className="text-lg font-semibold text-white mb-1">Entrar na conta</h2>
           <p className="text-sm text-zinc-500 mb-6">
-            Digite seu número de WhatsApp para acessar o painel
+            Use o mesmo número do WhatsApp e a senha definida no bot
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -80,11 +91,38 @@ export default function Login() {
               value={phone}
               onChange={e => setPhone(formatPhone(e.target.value))}
               leftIcon={<Phone size={16} />}
-              error={error}
+              error={error && !password ? error : ''}
               disabled={loading}
               autoComplete="tel"
               inputMode="numeric"
             />
+
+            <div className="relative">
+              <Input
+                label="Senha do painel"
+                type={showPwd ? 'text' : 'password'}
+                placeholder="Definida no bot com .senha"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                leftIcon={<Lock size={16} />}
+                error={error && password ? error : ''}
+                disabled={loading}
+                autoComplete="current-password"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPwd(p => !p)}
+                className="absolute right-3 top-[34px] text-zinc-500 hover:text-zinc-300 transition-colors"
+                tabIndex={-1}
+              >
+                {showPwd ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+
+            {/* Mostrar erro geral se não está em campo específico */}
+            {error && !error.includes('número') && !error.includes('senha') && (
+              <p className="text-red-400 text-xs">{error}</p>
+            )}
 
             <Button
               type="submit"
@@ -101,9 +139,20 @@ export default function Login() {
             </Button>
           </form>
 
-          <p className="text-xs text-zinc-600 text-center mt-5">
-            Use o mesmo número cadastrado no bot via WhatsApp.
-          </p>
+          {/* Dica de como criar senha */}
+          <div className="mt-5 rounded-xl bg-zinc-800/50 border border-zinc-700/50 p-3">
+            <div className="flex items-start gap-2">
+              <MessageSquare size={15} className="text-cyan-400 mt-0.5 shrink-0" />
+              <div>
+                <p className="text-xs font-medium text-zinc-300 mb-1">Primeiro acesso?</p>
+                <p className="text-xs text-zinc-500">
+                  Envie no WhatsApp:<br />
+                  <code className="text-cyan-400">.menu</code> para se cadastrar<br />
+                  <code className="text-cyan-400">.senha suasenha</code> para criar senha
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
       </motion.div>
     </div>
