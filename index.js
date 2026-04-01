@@ -17,7 +17,7 @@ const readline  = require("readline");
 const pino      = require('pino');
 const chalk     = require('chalk');
 const { v4: uuidv4 } = require('uuid');
-const { sendButtons } = require('./buttons');
+const { sendButtons, sendInteractiveMessage } = require('./buttons');
 const EfiBankPix = require('./efipay');
 
 // ========== BANNER ==========
@@ -286,66 +286,72 @@ function formatarTempo(expiraEm) {
 }
 
 // ========== ENVIAR LIST MESSAGE (padrão 1 botão → caixa de opções) ==========
+// Usa single_select (native flow) — formato moderno que funciona em contas pessoais
 async function sendList(sock, jid, { title, text, footer, buttonText, sections }, quoted) {
-  const botJid = sock.user?.id || '';
 
-  // Monta seções no formato correto do proto Baileys
+  // Monta as seções no formato do single_select
   const sectionsFmt = sections.map(s => ({
     title: s.title || '',
     rows:  (s.rows || []).map(r => ({
-      rowId:       r.id,
+      id:          r.id,
       title:       r.title,
       description: r.description || ''
     }))
   }));
 
-  // ── Tentativa 1: generateWAMessageFromContent com campos corretos do proto ──
+  const singleSelectParams = {
+    title:    buttonText || 'VER OPÇÕES',
+    sections: sectionsFmt
+  };
+
+  // ── Tentativa 1: single_select via sendInteractiveMessage (formato nativo moderno) ──
   try {
+    return await sendInteractiveMessage(sock, jid, {
+      text:   text  || ' ',
+      footer: footer || '',
+      title:  title || '',
+      interactiveButtons: [{
+        name:             'single_select',
+        buttonParamsJson: JSON.stringify(singleSelectParams)
+      }]
+    }, quoted ? { quoted } : {});
+  } catch (err1) {
+    console.warn(chalk.yellow('[LIST] single_select falhou:'), err1.message);
+  }
+
+  // ── Tentativa 2: listMessage proto (formato legado, funciona em Business) ──
+  try {
+    const sectionsFmtProto = sectionsFmt.map(s => ({
+      title: s.title,
+      rows:  s.rows.map(r => ({ rowId: r.id, title: r.title, description: r.description }))
+    }));
     const listContent = {
       listMessage: proto.Message.ListMessage.create({
         title:       title || '',
-        description: text  || '',       // ← campo correto no proto (não "text")
-        footerText:  footer || '',       // ← campo correto no proto (não "footer")
+        description: text  || '',
+        footerText:  footer || '',
         buttonText:  (buttonText || 'VER OPÇÕES').toUpperCase(),
         listType:    proto.Message.ListMessage.ListType.SINGLE_SELECT,
-        sections:    sectionsFmt
+        sections:    sectionsFmtProto
       })
     };
-
-    const msgOpts = quoted
-      ? { userJid: botJid, quoted }
-      : { userJid: botJid };
-
-    const msg = await generateWAMessageFromContent(jid, listContent, msgOpts);
-    // Relay SEM additionalNodes (biz-nodes são apenas para catálogos de produto)
+    const userJid = sock.user?.id || '';
+    const msg = await generateWAMessageFromContent(jid, listContent, quoted ? { userJid, quoted } : { userJid });
     await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
     return msg;
-  } catch (err1) {
-    console.warn(chalk.yellow('[LIST] tentativa 1 falhou:'), err1.message);
-  }
-
-  // ── Tentativa 2: sendMessage direto com formato de lista do Baileys ──
-  try {
-    const opts = quoted ? { quoted } : {};
-    return await sock.sendMessage(jid, {
-      text:       text  || '',
-      footer:     footer || '',
-      title:      title || '',
-      buttonText: (buttonText || 'VER OPÇÕES').toUpperCase(),
-      sections:   sectionsFmt,
-      listType:   1
-    }, opts);
   } catch (err2) {
-    console.warn(chalk.yellow('[LIST] tentativa 2 falhou:'), err2.message);
+    console.warn(chalk.yellow('[LIST] listMessage falhou:'), err2.message);
   }
 
-  // ── Fallback final: texto formatado com numeração ──
+  // ── Fallback final: texto formatado numerado (sempre funciona) ──
   try {
+    let num = 0;
     const linhas = sections.flatMap(s =>
-      (s.rows || []).map((r, i) => `*${i + 1}.* ${r.title}${r.description ? `\n    _${r.description}_` : ''}`)
+      (s.rows || []).map(r => `*${++num}.* ${r.title}${r.description ? ` — _${r.description}_` : ''}`)
     );
     const textoFinal =
-      `*${title}*\n\n` +
+      `*${title}*\n` +
+      `${'─'.repeat(26)}\n\n` +
       `${text}\n\n` +
       linhas.join('\n') +
       (footer ? `\n\n_${footer}_` : '');
