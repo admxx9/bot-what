@@ -334,20 +334,28 @@ async function sendList(sock, jid, { title, text, footer, buttonText, sections }
   }
 }
 
-// ========== ENVIAR 1 BOTÃO QUICK_REPLY (para confirmações simples) ==========
-async function sendBtn(sock, jid, texto, rodape, btnId, btnLabel, quoted) {
-  try {
-    await sendButtons(sock, jid, {
-      text: texto,
-      footer: rodape || '',
-      buttons: [{ id: btnId, text: btnLabel }]
-    });
-  } catch {
-    // Fallback texto
-    await sock.sendMessage(jid, {
-      text: `${texto}\n\n👉 Responda: ${btnId}`
-    }, quoted ? { quoted } : {});
-  }
+// ========== ENVIAR CONFIRMAÇÃO DE ADMIN (lista com 1 opção) ==========
+// Usa sendList para ser mais confiável que botões quick_reply
+async function sendAdminConfirmList(sock, jid, groupId, nomeGrupo) {
+  return sendList(sock, jid, {
+    title: '⚠️ Aguardando cargo de admin',
+    text:
+      `🏠 Grupo: *${nomeGrupo || groupId}*\n\n` +
+      `Após me promover a administrador no grupo, confirme clicando abaixo.\n\n` +
+      `_Vá ao grupo → Participantes → Me selecione → Tornar admin_`,
+    footer: 'BotAluguel — verificação manual',
+    buttonText: '👉 CONFIRMAR ADMIN',
+    sections: [{
+      title: 'Ação necessária',
+      rows: [
+        {
+          id: `verificar_admin_${groupId}`,
+          title: '✅ Confirmar que virei administrador',
+          description: 'Clique após ser promovido a admin no grupo'
+        }
+      ]
+    }]
+  });
 }
 
 // ========== NOTIFICAR ADMIN RECEBIDO ==========
@@ -403,18 +411,12 @@ async function verificarAdminNoGrupo(sock, groupId, from) {
     if (isAdmin) {
       await notificarAdminRecebido(sock, groupId);
     } else {
+      const nomeGrupo = getGrupo(groupId)?.nomeGrupo || groupId;
       await sock.sendMessage(from, {
-        text: `❌ *Ainda não sou admin neste grupo.*\n\n🏠 *${getGrupo(groupId)?.nomeGrupo || groupId}*\n\nPeça a um administrador do grupo para me promover e clique novamente.`
+        text: `❌ *Ainda não sou admin neste grupo.*\n\n🏠 *${nomeGrupo}*\n\nPeça a um administrador para me promover e clique novamente.`
       });
       await sleep(600);
-      // Reenviar botão de verificação
-      await sendBtn(sock, from,
-        `⏳ Aguardando promoção a admin no grupo:\n*${getGrupo(groupId)?.nomeGrupo || groupId}*`,
-        'Clique após me promover a administrador',
-        `verificar_admin_${groupId}`,
-        '✅ Já sou admin — verificar novamente',
-        null
-      );
+      await sendAdminConfirmList(sock, from, groupId, nomeGrupo);
     }
   } catch (err) {
     await sock.sendMessage(from, {
@@ -576,17 +578,11 @@ async function iniciarBot() {
           try { const meta = await sock.groupMetadata(groupId); nomeGrupo = meta.subject || groupId; } catch {}
           addGrupo(groupId, sender, nomeGrupo);
 
-          await enviar(`✅ *Entrei no grupo!*\n\n🏠 *${nomeGrupo}*\n\nAgora preciso ser *administrador* para funcionar.\n📌 Peça a um admin para me promover e clique no botão abaixo.`);
+          await enviar(`✅ *Entrei no grupo!*\n\n🏠 *${nomeGrupo}*\n\nAgora preciso ser *administrador* para funcionar.\n📌 Peça a um admin do grupo para me promover, depois clique na opção abaixo.`);
           await sleep(800);
 
-          // Envia 1 botão para verificar admin manualmente
-          await sendBtn(sock, from,
-            `⚠️ *Aguardando cargo de admin*\n\n🏠 Grupo: *${nomeGrupo}*\n\nApós me promover a administrador, clique abaixo para confirmar.`,
-            'Verificação manual de admin',
-            `verificar_admin_${groupId}`,
-            '✅ Já sou admin — confirmar',
-            null
-          );
+          // Envia lista com 1 opção para confirmar admin manualmente
+          await sendAdminConfirmList(sock, from, groupId, nomeGrupo);
 
           // Avisa no grupo
           await sleep(3000);

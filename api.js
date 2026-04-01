@@ -81,12 +81,12 @@ function authMiddleware(req, res, next) {
 
   if (!user) return res.status(401).json({ error: 'Usuário não encontrado. Acesse o bot primeiro.' });
 
-  // Validar senha se o usuário tiver uma definida
-  if (user.senha) {
-    if (!password) return res.status(401).json({ error: 'Senha obrigatória' });
-    if (user.senha !== hashSenha(password)) return res.status(401).json({ error: 'Senha incorreta' });
+  // Senha obrigatória para todas as rotas autenticadas
+  if (!user.senha) {
+    return res.status(401).json({ error: 'Crie sua senha no bot primeiro: .senha suasenha' });
   }
-  // Se não tem senha definida ainda: login livre (backward compat)
+  if (!password) return res.status(401).json({ error: 'Senha obrigatória' });
+  if (user.senha !== hashSenha(password)) return res.status(401).json({ error: 'Senha incorreta' });
 
   req.userId = userId;
   req.user   = user;
@@ -122,14 +122,17 @@ app.post('/api/auth/login', (req, res) => {
     });
   }
 
-  // Validar senha se o usuário tiver uma definida
-  if (user.senha) {
-    if (!password) {
-      return res.status(401).json({ error: 'Este usuário tem senha. Informe sua senha.' });
-    }
-    if (user.senha !== hashSenha(password)) {
-      return res.status(401).json({ error: 'Senha incorreta' });
-    }
+  // Senha obrigatória para acessar o painel
+  if (!user.senha) {
+    return res.status(401).json({
+      error: 'Você ainda não criou uma senha. Envie no WhatsApp: .senha suasenha'
+    });
+  }
+  if (!password) {
+    return res.status(401).json({ error: 'Informe sua senha do painel.' });
+  }
+  if (user.senha !== hashSenha(password)) {
+    return res.status(401).json({ error: 'Senha incorreta.' });
   }
 
   // Login bem-sucedido

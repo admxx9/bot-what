@@ -7,14 +7,13 @@ import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 
 export default function Login() {
-  const [phone,       setPhone]       = useState('')
-  const [password,    setPassword]    = useState('')
-  const [showPwd,     setShowPwd]     = useState(false)
-  const [loading,     setLoading]     = useState(false)
-  const [error,       setError]       = useState('')
-  const [semSenha,    setSemSenha]    = useState(false)
-  const { signIn }                    = useAuth()
-  const navigate                      = useNavigate()
+  const [phone,    setPhone]    = useState('')
+  const [password, setPassword] = useState('')
+  const [showPwd,  setShowPwd]  = useState(false)
+  const [loading,  setLoading]  = useState(false)
+  const [error,    setError]    = useState('')
+  const { signIn }              = useAuth()
+  const navigate                = useNavigate()
 
   const formatPhone = (val: string) => val.replace(/\D/g, '').slice(0, 13)
 
@@ -25,21 +24,24 @@ export default function Login() {
       setError('Digite um número válido com DDI e DDD (ex: 5511999999999)')
       return
     }
+    if (!password.trim()) {
+      setError('A senha é obrigatória. Crie uma no bot com: .senha suasenha')
+      return
+    }
     setError('')
     setLoading(true)
     try {
-      await signIn(digits, password || undefined)
+      await signIn(digits, password)
       navigate('/')
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || ''
 
       if (msg.includes('não encontrado') || msg.includes('bot primeiro')) {
-        setError('Número não cadastrado. Envie .menu para o bot no WhatsApp primeiro.')
-      } else if (msg.includes('Senha obrigatória') || msg.includes('senha')) {
-        setSemSenha(false)
-        setError('Senha incorreta. Defina sua senha no bot com: .senha minhasenha')
-      } else if (msg.includes('WhatsApp')) {
-        setError(msg)
+        setError('Número não cadastrado. Envie .menu no bot pelo WhatsApp primeiro.')
+      } else if (msg.includes('ainda não criou') || msg.includes('Crie sua senha')) {
+        setError('Você ainda não criou uma senha. Envie no WhatsApp: .senha suasenha')
+      } else if (msg.includes('incorreta') || msg.includes('Informe')) {
+        setError('Senha incorreta. Se esqueceu, envie .senha novasenha no bot.')
       } else {
         setError(msg || 'Erro ao fazer login. Verifique os dados e tente novamente.')
       }
@@ -91,7 +93,6 @@ export default function Login() {
               value={phone}
               onChange={e => setPhone(formatPhone(e.target.value))}
               leftIcon={<Phone size={16} />}
-              error={error && !password ? error : ''}
               disabled={loading}
               autoComplete="tel"
               inputMode="numeric"
@@ -101,13 +102,13 @@ export default function Login() {
               <Input
                 label="Senha do painel"
                 type={showPwd ? 'text' : 'password'}
-                placeholder="Definida no bot com .senha"
+                placeholder="Definida no bot com .senha suasenha"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 leftIcon={<Lock size={16} />}
-                error={error && password ? error : ''}
                 disabled={loading}
                 autoComplete="current-password"
+                required
               />
               <button
                 type="button"
@@ -119,9 +120,10 @@ export default function Login() {
               </button>
             </div>
 
-            {/* Mostrar erro geral se não está em campo específico */}
-            {error && !error.includes('número') && !error.includes('senha') && (
-              <p className="text-red-400 text-xs">{error}</p>
+            {error && (
+              <div className="rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2">
+                <p className="text-red-400 text-xs leading-relaxed">{error}</p>
+              </div>
             )}
 
             <Button

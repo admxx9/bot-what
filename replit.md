@@ -79,6 +79,32 @@ Edite a variável `DONO` no `.env` ou diretamente no `index.js`.
 - **Start API** — Inicia a API REST (`node api.js`, porta 3001)
 - **Start Web** — Inicia o painel web (`cd web && npm run dev`, porta 5000)
 
+## Melhorias Implementadas (Abril 2025)
+
+### Detecção de Admin (Corrigida)
+- Detecção automática via evento `group-participants.update` (action: promote)
+- Fallback via `messageStubType === 29`
+- Verificação manual: `sendAdminConfirmList` envia lista com 1 opção "✅ Confirmar que virei administrador"
+- Substituiu `sendBtn` (que usava quick_reply buttons com fallback ruim) por `sendList` (mais confiável)
+- Ao clicar, bot verifica admin via `groupMetadata` — se ok, ativa; se não, reenvia o prompt
+
+### Padrão de Botões (1 botão → lista)
+- Todos os menus usam `sendList`: 1 botão que abre uma caixa de opções
+- Sem múltiplos botões na mesma mensagem
+- Comandos: `.menu`, `.painel`, `.planos`, `.comprar`, `.ativar`, `.grupos`, `.recarregar`
+
+### Login Seguro (Bot + Site)
+- Senha obrigatória para acessar o painel web
+- Usuário cria senha no bot com `.senha suasenha`
+- API retorna erro claro se usuário não tem senha: "Envie .senha suasenha no bot"
+- Senha armazenada como SHA-256 hash no JSON
+- `useAuth.ts` sempre persiste senha no localStorage para autenticar todas as chamadas
+
+### Sincronização Bot ↔ Site
+- API lê dos mesmos arquivos JSON que o bot escreve (sincronização em tempo real)
+- Endpoints cobrem: autenticação, planos, grupos, pagamentos, status PIX
+- Cada usuário acessa apenas seus próprios dados (validação por phone + senha)
+
 ## Comandos do Bot (WhatsApp)
 
 ### Privado

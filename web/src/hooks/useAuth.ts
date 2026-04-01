@@ -7,16 +7,14 @@ export function useAuth() {
 
   const isAuthenticated = !!phone
 
-  const signIn = useCallback(async (rawPhone: string, rawPassword?: string) => {
+  const signIn = useCallback(async (rawPhone: string, rawPassword: string) => {
     const data = await login(rawPhone, rawPassword)
     if (data.success) {
       const digits = rawPhone.replace(/\D/g, '')
       localStorage.setItem('ba_phone', digits)
+      localStorage.setItem('ba_password', rawPassword)
       setPhone(digits)
-      if (rawPassword) {
-        localStorage.setItem('ba_password', rawPassword)
-        setPassword(rawPassword)
-      }
+      setPassword(rawPassword)
       return data.user
     }
     throw new Error('Falha no login')

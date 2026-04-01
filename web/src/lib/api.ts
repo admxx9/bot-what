@@ -85,7 +85,7 @@ export interface PixResponse {
 }
 
 // ===== Auth =====
-export const login = async (phone: string, password?: string) => {
+export const login = async (phone: string, password: string) => {
   const { data } = await client.post('/auth/login', { phone, password })
   return data
 }
