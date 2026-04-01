@@ -286,51 +286,72 @@ function formatarTempo(expiraEm) {
 }
 
 // ========== ENVIAR LIST MESSAGE (padrão 1 botão → caixa de opções) ==========
-// Implementação correta usando generateWAMessageFromContent + relayMessage
 async function sendList(sock, jid, { title, text, footer, buttonText, sections }, quoted) {
-  const listContent = {
-    listMessage: {
-      title:      title || '',
-      text:       text  || '',
-      footer:     footer || '',
-      buttonText: (buttonText || 'VER OPÇÕES').toUpperCase(),
-      listType:   1, // SINGLE_SELECT
-      sections:   sections.map(s => ({
-        title: s.title || '',
-        rows:  (s.rows || []).map(r => ({
-          rowId:       r.id,
-          title:       r.title,
-          description: r.description || ''
-        }))
-      }))
-    }
-  };
+  const botJid = sock.user?.id || '';
 
+  // Monta seções no formato correto do proto Baileys
+  const sectionsFmt = sections.map(s => ({
+    title: s.title || '',
+    rows:  (s.rows || []).map(r => ({
+      rowId:       r.id,
+      title:       r.title,
+      description: r.description || ''
+    }))
+  }));
+
+  // ── Tentativa 1: generateWAMessageFromContent com campos corretos do proto ──
   try {
+    const listContent = {
+      listMessage: proto.Message.ListMessage.create({
+        title:       title || '',
+        description: text  || '',       // ← campo correto no proto (não "text")
+        footerText:  footer || '',       // ← campo correto no proto (não "footer")
+        buttonText:  (buttonText || 'VER OPÇÕES').toUpperCase(),
+        listType:    proto.Message.ListMessage.ListType.SINGLE_SELECT,
+        sections:    sectionsFmt
+      })
+    };
+
     const msgOpts = quoted
-      ? { userJid: sock.user?.id, quoted }
-      : { userJid: sock.user?.id };
+      ? { userJid: botJid, quoted }
+      : { userJid: botJid };
 
     const msg = await generateWAMessageFromContent(jid, listContent, msgOpts);
-
-    await sock.relayMessage(jid, msg.message, {
-      messageId: msg.key.id,
-      additionalNodes: [{
-        tag: 'biz', attrs: {},
-        content: [{ tag: 'list', attrs: { v: '2', type: 'product_list' } }]
-      }]
-    });
+    // Relay SEM additionalNodes (biz-nodes são apenas para catálogos de produto)
+    await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
     return msg;
-  } catch (err) {
-    // Fallback: tenta sendMessage padrão
-    console.warn(chalk.yellow('[LIST FALLBACK]'), err.message);
-    try {
-      return await sock.sendMessage(jid, listContent, quoted ? { quoted } : {});
-    } catch {
-      // Fallback final: texto simples com os comandos
-      const linhas = sections.flatMap(s => (s.rows || []).map(r => `• ${r.title} → ${r.id}`));
-      return sock.sendMessage(jid, { text: `${text}\n\n${linhas.join('\n')}` }, quoted ? { quoted } : {});
-    }
+  } catch (err1) {
+    console.warn(chalk.yellow('[LIST] tentativa 1 falhou:'), err1.message);
+  }
+
+  // ── Tentativa 2: sendMessage direto com formato de lista do Baileys ──
+  try {
+    const opts = quoted ? { quoted } : {};
+    return await sock.sendMessage(jid, {
+      text:       text  || '',
+      footer:     footer || '',
+      title:      title || '',
+      buttonText: (buttonText || 'VER OPÇÕES').toUpperCase(),
+      sections:   sectionsFmt,
+      listType:   1
+    }, opts);
+  } catch (err2) {
+    console.warn(chalk.yellow('[LIST] tentativa 2 falhou:'), err2.message);
+  }
+
+  // ── Fallback final: texto formatado com numeração ──
+  try {
+    const linhas = sections.flatMap(s =>
+      (s.rows || []).map((r, i) => `*${i + 1}.* ${r.title}${r.description ? `\n    _${r.description}_` : ''}`)
+    );
+    const textoFinal =
+      `*${title}*\n\n` +
+      `${text}\n\n` +
+      linhas.join('\n') +
+      (footer ? `\n\n_${footer}_` : '');
+    return await sock.sendMessage(jid, { text: textoFinal }, quoted ? { quoted } : {});
+  } catch (err3) {
+    console.error(chalk.red('[LIST FALLBACK ERRO]'), err3.message);
   }
 }
 
