@@ -17,5 +17,17 @@
     "expiraEm": "2026-04-30T22:01:54.086Z",
     "notificado48h": false,
     "notificado24h": false
+  },
+  {
+    "id": "aebd49da-71ad-470f-9979-cd55dc70f9fe",
+    "userId": "5562993735175@s.whatsapp.net",
+    "plano": "basico",
+    "nomePlano": "⭐ Básico",
+    "status": "ativo",
+    "maxGrupos": 1,
+    "ativadoEm": "2026-04-01T05:20:51.957Z",
+    "expiraEm": "2026-05-01T05:20:51.957Z",
+    "notificado48h": false,
+    "notificado24h": false
   }
 ]

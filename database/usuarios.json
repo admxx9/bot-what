@@ -8,7 +8,7 @@
     "xp": 0,
     "criadoEm": "2026-03-29T15:46:56.845Z",
     "moedas": 0,
-    "senha": "9d9d98c57cd2bd0af454e282ac6b475eae0c064398c661f5c807833fd65ce465"
+    "senha": "b23fcb8820e567d1143f4a15cfeaf04ba660bafd89eeb496e99ffd8bd1079f71"
   },
   {
     "id": "89752418164814@lid",
@@ -136,7 +136,8 @@
   {
     "id": "5562993735175@s.whatsapp.net",
     "nome": "Usuário",
-    "moedas": 30,
-    "criadoEm": "2026-03-31T22:04:40.423Z"
+    "moedas": 29,
+    "criadoEm": "2026-03-31T22:04:40.423Z",
+    "senha": "2c99e051cc1bc435aaca827b548db6b411f8862b1115ede37b1999f6ca50f496"
   }
 ]
