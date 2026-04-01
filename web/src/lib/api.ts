@@ -90,6 +90,11 @@ export const login = async (phone: string, password: string) => {
   return data
 }
 
+export const criarSenha = async (phone: string, password: string) => {
+  const { data } = await client.post('/auth/criar-senha', { phone, password })
+  return data
+}
+
 // ===== User =====
 export const getMe = async (): Promise<User> => {
   const { data } = await client.get('/user/me')

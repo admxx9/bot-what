@@ -154,6 +154,38 @@ app.post('/api/auth/login', (req, res) => {
   });
 });
 
+// POST /api/auth/criar-senha — cria senha pela primeira vez via painel web (salva no JSON)
+app.post('/api/auth/criar-senha', (req, res) => {
+  const { phone, password } = req.body;
+  if (!phone)    return res.status(400).json({ error: 'Telefone obrigatório' });
+  if (!password) return res.status(400).json({ error: 'Senha obrigatória' });
+  if (String(password).length < 4) {
+    return res.status(400).json({ error: 'Senha muito curta. Use no mínimo 4 caracteres.' });
+  }
+
+  const userId = normalizePhone(phone);
+  const users  = ler(PATHS.usuarios);
+  const idx    = users.findIndex(u => u.id === userId);
+
+  if (idx === -1) {
+    return res.status(404).json({
+      error: 'Número não cadastrado. Envie .menu para o bot no WhatsApp primeiro para se registrar.'
+    });
+  }
+
+  if (users[idx].senha) {
+    return res.status(409).json({
+      error: 'Você já possui senha. Para alterá-la, envie .senha novasenha no WhatsApp.'
+    });
+  }
+
+  // Salva a senha (hash SHA-256) no JSON
+  users[idx].senha = hashSenha(String(password));
+  salvar(PATHS.usuarios, users);
+
+  res.json({ success: true, message: 'Senha criada com sucesso!' });
+});
+
 // =========================================================
 // ========== ROTAS AUTENTICADAS ==========
 // =========================================================
